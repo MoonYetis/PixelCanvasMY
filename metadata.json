@@ -1,0 +1,6 @@
+{
+  "name": "Wplace Real-time Canvas",
+  "description": "A collaborative, real-time pixel art canvas platform with high performance coordinates map, local currency wallet, global leaderboards, and interactive community chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
