@@ -33,7 +33,9 @@ import {
   HelpCircle,
   Hash,
   MessageSquare,
-  Send
+  Send,
+  LayoutDashboard,
+  Zap
 } from "lucide-react";
 
 // Curated flags selection list
@@ -534,6 +536,21 @@ export default function App() {
           
           <button
             onClick={() => {
+              setActiveMenuOverlay(activeMenuOverlay === "dashboard" ? null : "dashboard");
+              triggerTone(784, "sine", 0.05); // High modern chime
+            }}
+            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
+              activeMenuOverlay === "dashboard"
+                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
+                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
+            }`}
+            title="Painter Dashboard (Real-time Balances, Faucet & Cooldowns)"
+          >
+            <LayoutDashboard className="w-4 h-4 animate-pulse text-indigo-500 hover:text-indigo-600" style={{ color: activeMenuOverlay === "dashboard" ? "#ffffff" : "" }} />
+          </button>
+
+          <button
+            onClick={() => {
               setActiveMenuOverlay(activeMenuOverlay === "store" ? null : "store");
               triggerTone(659, "sine", 0.05);
             }}
@@ -637,6 +654,7 @@ export default function App() {
             {/* Slide heading */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3.5 mb-3.5">
               <div className="flex items-center gap-2">
+                {activeMenuOverlay === "dashboard" && <LayoutDashboard className="w-4.5 h-4.5 text-indigo-600 animate-pulse" />}
                 {activeMenuOverlay === "store" && <ShoppingBag className="w-4.5 h-4.5 text-purple-600" />}
                 {activeMenuOverlay === "leaderboard" && <Trophy className="w-4.5 h-4.5 text-yellow-600" />}
                 {activeMenuOverlay === "chat" && <MessageSquare className="w-4.5 h-4.5 text-purple-600" />}
@@ -645,7 +663,7 @@ export default function App() {
                 {activeMenuOverlay === "developer_rpc" && <TerminalIcon className="w-4.5 h-4.5 text-indigo-600" />}
 
                 <span className="text-xs font-black uppercase tracking-wider text-slate-900">
-                  {activeMenuOverlay.replace("_", " ")}
+                  {activeMenuOverlay === "dashboard" ? "Painter Dashboard" : activeMenuOverlay.replace("_", " ")}
                 </span>
               </div>
               
@@ -656,6 +674,123 @@ export default function App() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {/* OVERLAY PANEL DASHBOARD: PLAYER METRICS, COINS & FAUCETS */}
+            {activeMenuOverlay === "dashboard" && (
+              <div className="space-y-4 text-slate-800 animate-fade-in">
+                <p className="text-[11px] text-slate-500 leading-normal border-b border-slate-100 pb-2">
+                  Welcome to your painter central hub. Monitor block transactions, request free coins, and upgrade your map capacity.
+                </p>
+
+                {/* Profile Card Summary */}
+                <div className="bg-gradient-to-br from-indigo-50/50 to-purple-50 border border-indigo-100/65 rounded-xl p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl leading-none" role="img" aria-label="your flag">
+                      {profile?.flag_emoji || "🇺🇸"}
+                    </span>
+                    <div>
+                      <div className="font-bold text-xs text-slate-900 leading-snug flex items-center gap-1.5">
+                        <span>{profile?.username || "Guest Painter"}</span>
+                        <span className="text-[8px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded uppercase font-bold tracking-tight">Active</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-slate-450 block truncate max-w-[150px] mt-0.5">
+                        {address}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveMenuOverlay(null);
+                      setShowProfileSelector(true);
+                    }}
+                    className="py-1 px-2.5 bg-white border border-slate-200 hover:border-purple-300 hover:text-purple-600 rounded text-[10px] font-bold text-slate-505 transition-all text-center cursor-pointer shadow-2xs"
+                  >
+                    Edit flag
+                  </button>
+                </div>
+
+                {/* Energy capacity metrics */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-[10px] font-mono font-bold text-slate-700">
+                    <span className="flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                      COOLDOWN ENERGY
+                    </span>
+                    <span className="text-indigo-600">{charges}/{maxCharges} px</span>
+                  </div>
+
+                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden border border-slate-300/35">
+                    <div 
+                      className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-emerald-400 rounded-full transition-all duration-300"
+                      style={{ width: `${(charges / maxCharges) * 100}%` }}
+                    />
+                  </div>
+
+                  <p className="text-[10px] text-slate-455 font-sans leading-relaxed">
+                    {charges < maxCharges ? (
+                      <span className="text-slate-500 italic animate-pulse">⚡ Recharging backup generator (+1 energy/10s)...</span>
+                    ) : (
+                      <span className="text-emerald-600 font-bold">✓ Reactor fully loaded! Ready for custom drawings.</span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Real-time assets balance vault */}
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-mono text-slate-400 uppercase tracking-widest block font-bold">Your Wallet Balance</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-3 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
+                      <span className="text-[9px] font-mono text-slate-400 font-bold block">Wace Coins (FB)</span>
+                      <strong className="text-yellow-600 font-black text-sm tracking-tight block mt-1">
+                        {profile ? profile.fb_balance.toFixed(2) : "0.00"} W
+                      </strong>
+                    </div>
+
+                    <div className="p-3 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
+                      <span className="text-[9px] font-mono text-slate-400 font-bold block">Yeti Clans (MY)</span>
+                      <strong className="text-purple-600 font-black text-sm tracking-tight block mt-1">
+                        {profile ? profile.my_balance.toLocaleString() : "0"} MY
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instant Taproot Faucets (No configuration or metadata required!) */}
+                <div className="p-3 bg-slate-50/60 border border-slate-200 rounded-xl space-y-2.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest font-bold">Ledger Faucet</span>
+                    <span className="text-[8px] bg-emerald-50 text-emerald-600 border border-emerald-100 rounded px-1 text-center leading-none font-bold">Unlimited Fuel</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => triggerFaucet("FB")}
+                      disabled={faucetLoading !== null}
+                      className="py-1.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-750 border border-yellow-200 max-w-full font-mono text-[10px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center gap-1 shadow-2xs"
+                    >
+                      {faucetLoading === "FB" ? "Adding..." : "+5.0 Coins"}
+                    </button>
+
+                    <button
+                      onClick={() => triggerFaucet("MOONYETIS")}
+                      disabled={faucetLoading !== null}
+                      className="py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-750 border border-purple-200 max-w-full font-mono text-[10px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center gap-1 shadow-2xs"
+                    >
+                      {faucetLoading === "MOONYETIS" ? "Adding..." : "+2.5K Yeti"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick actions info help */}
+                <div className="text-[10px] text-slate-455 font-mono leading-relaxed bg-indigo-50/30 p-2 text-indigo-700 rounded-lg border border-indigo-100/40 flex items-center gap-1.5 justify-center">
+                  <span>Current Painted Pixel count:</span>
+                  <strong className="font-extrabold text-indigo-600 font-mono text-xs">
+                    {profile?.total_pixels_owned || 0} px
+                  </strong>
+                </div>
+
+              </div>
+            )}
 
             {/* OVERLAY PANEL CHAT: COOPERATIVE PUBLIC CHATROOM */}
             {activeMenuOverlay === "chat" && (

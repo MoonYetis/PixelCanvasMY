@@ -15,7 +15,8 @@ import {
   Trophy,
   Shield,
   HelpCircle,
-  HelpCircle as InfoIcon
+  HelpCircle as InfoIcon,
+  Zap
 } from "lucide-react";
 
 interface CanvasBoardProps {
@@ -118,6 +119,11 @@ export default function CanvasBoard({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hasCenteredRef = useRef(false);
+
+  // Direct instant paint mode and drag separation refs
+  const [directPaintMode, setDirectPaintMode] = useState<boolean>(false);
+  const mouseDownCoords = useRef<{ x: number; y: number } | null>(null);
+  const dragThresholdPassed = useRef<boolean>(false);
 
   // Viewport zoom level and translation offsets (Center initially on Europe/America mesh)
   const [zoom, setZoom] = useState<number>(1.8);
@@ -392,21 +398,20 @@ export default function CanvasBoard({
       ctx.fillText(lbl.text, lbl.x, lbl.y);
     });
 
-    // 5. Optionally draw high precision 1px grid lines (only visible when zooming in high values)
-    if (showGridLines || zoom >= 6) {
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
-      ctx.lineWidth = 0.25;
-      for (let i = 0; i <= canvas.width; i += 10) {
-         ctx.beginPath();
+    // 5. Draw high precision 1px pixel-aligned cell boundary grids (Dynamic adaptive intensity based on zoom level)
+    if (showGridLines || zoom >= 4) {
+      // Very soft, light, elegant, high-contrast grid lines for precise placement reference
+      ctx.strokeStyle = zoom >= 7 ? "rgba(100, 116, 139, 0.18)" : "rgba(100, 116, 139, 0.08)";
+      ctx.lineWidth = 0.12;
+      ctx.beginPath();
+      // Draw 1px aligned lines using single batch stroke (100x faster than separate stroke loops!)
+      for (let i = 0; i <= canvas.width; i += 1) {
          ctx.moveTo(i, 0);
          ctx.lineTo(i, canvas.height);
-         ctx.stroke();
-
-         ctx.beginPath();
          ctx.moveTo(0, i);
          ctx.lineTo(canvas.width, i);
-         ctx.stroke();
       }
+      ctx.stroke();
     }
 
     // 6. Draw all committed pixels on top
@@ -431,19 +436,41 @@ export default function CanvasBoard({
         // Erase preview
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(sx, sy, 1, 1);
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.8)";
-        ctx.lineWidth = 0.2;
-        ctx.strokeRect(sx, sy, 1, 1);
+        ctx.strokeStyle = "rgba(239, 68, 68, 0.85)";
+        ctx.lineWidth = 0.15;
+        ctx.strokeRect(sx + 0.08, sy + 0.08, 0.84, 0.84); // Mathematically shrunk inner rect to avoid bleeding on adjacent cells
       } else {
         ctx.fillStyle = col;
         ctx.fillRect(sx, sy, 1, 1);
-        // Highlight active edits nicely with high contrast dark stroke for light theme map
-        ctx.strokeStyle = "rgba(15, 23, 42, 0.85)";
+        // Highlight active edits nicely with high contrast dark inner stroke that stays within the cell bounds!
+        ctx.strokeStyle = "rgba(15, 23, 42, 0.9)";
         ctx.lineWidth = 0.15;
-        ctx.strokeRect(sx, sy, 1, 1);
+        ctx.strokeRect(sx + 0.08, sy + 0.08, 0.84, 0.84); // Mathematically shrunk inner rect to avoid bleeding on adjacent cells
       }
     });
-  }, [pixels, stagedPixels, zoom, showGridLines, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
+
+    // 8. Draw selected pixel highlight target cursor with higher contrast pulsing outer bracket
+    if (selectedPixel) {
+      const sx = selectedPixel.x;
+      const sy = selectedPixel.y;
+      
+      // Face indicator on the selected cell - shaded translucent interior fill
+      ctx.fillStyle = "rgba(147, 51, 234, 0.28)";
+      ctx.fillRect(sx, sy, 1, 1);
+
+      // Inward-bound stroke lines to guarantee zero bleed on adjacent pixels
+      ctx.strokeStyle = "rgba(147, 51, 234, 0.95)";
+      ctx.lineWidth = 0.2;
+      ctx.strokeRect(sx + 0.1, sy + 0.1, 0.8, 0.8);
+      
+      // Exquisite outer bracket ring of radius 3.5 so it is perfectly visible zoomed out
+      ctx.strokeStyle = "rgba(139, 92, 246, 0.75)";
+      ctx.lineWidth = 0.35;
+      ctx.beginPath();
+      ctx.arc(sx + 0.5, sy + 0.5, 3.5, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+  }, [pixels, stagedPixels, selectedPixel, selectedColor, zoom, showGridLines, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
 
   // Viewport zoom operations
   const handleZoomOffset = (direction: "in" | "out") => {
@@ -490,10 +517,43 @@ export default function CanvasBoard({
     setSelectedPixel({ x: validX, y: validY });
   };
 
-  // Pan interactions
+  // Direct coordinate painting helper
+  const paintSinglePixelDirect = async (x: number, y: number, color: string) => {
+    if (!currentAddress) {
+      onTriggerProfile();
+      return;
+    }
+    if (charges < 1) {
+      alert(`⚠️ Energy depleted! You have 0/${maxCharges} charges. Please wait for auto-regeneration (+1 every 10s). you can also boost charges in Store!`);
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      triggerBeep(784, "sine", 0.05); // Play modern high chime chord on paint success
+      const res = await onPaintPixels([{ x, y, color }], chosenCurrency);
+      if (res && res.success) {
+        // Remove from staging list if it existed there
+        const key = `${x},${y}`;
+        setStagedPixels((prev) => {
+          const updated = { ...prev };
+          delete updated[key];
+          return updated;
+        });
+        setSelectedPixel(null);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.message || "Verify transactions: painting failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Pan & Click Separation mechanics
   const handleMouseDownAction = (e: MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return; // Left click drag
-    setIsDragging(true);
+    mouseDownCoords.current = { x: e.clientX, y: e.clientY };
+    dragThresholdPassed.current = false;
     dragStart.current = { x: e.clientX - panX, y: e.clientY - panY };
   };
 
@@ -501,9 +561,20 @@ export default function CanvasBoard({
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    if (isDragging) {
-      setPanX(e.clientX - dragStart.current.x);
-      setPanY(e.clientY - dragStart.current.y);
+    if (mouseDownCoords.current) {
+      const dx = e.clientX - mouseDownCoords.current.x;
+      const dy = e.clientY - mouseDownCoords.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // If moved more than 5px, it is a drag/pan operation!
+      if (distance > 5) {
+        dragThresholdPassed.current = true;
+        if (!isDragging) {
+          setIsDragging(true);
+        }
+        setPanX(e.clientX - dragStart.current.x);
+        setPanY(e.clientY - dragStart.current.y);
+      }
     } else {
       const localX = e.clientX - rect.left - panX;
       const localY = e.clientY - rect.top - panY;
@@ -520,27 +591,57 @@ export default function CanvasBoard({
   };
 
   const handleMouseUpAction = (e: MouseEvent<HTMLDivElement>) => {
-    if (!isDragging) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const localX = e.clientX - rect.left - panX;
-        const localY = e.clientY - rect.top - panY;
+    if (mouseDownCoords.current) {
+      const dx = e.clientX - mouseDownCoords.current.x;
+      const dy = e.clientY - mouseDownCoords.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
 
-        const px = Math.floor(localX / zoom);
-        const py = Math.floor(localY / zoom);
+      // Treat as clean click only if cursor moved less than 5px
+      if (distance < 5 && !dragThresholdPassed.current) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          const localX = e.clientX - rect.left - panX;
+          const localY = e.clientY - rect.top - panY;
 
-        if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
-          setSelectedPixel({ x: px, y: py });
+          const px = Math.floor(localX / zoom);
+          const py = Math.floor(localY / zoom);
 
-          // Directly stage pixel on click to make it extremely immediate (wplace workflow)
-          const key = `${px},${py}`;
-          setStagedPixels((prev) => ({
-            ...prev,
-            [key]: selectedColor,
-          }));
+          if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
+            if (directPaintMode) {
+              triggerBeep(329.63, "sine", 0.04);
+              setSelectedPixel({ x: px, y: py });
+              // Direct painting Mode: Place instantly to the backend database!
+              paintSinglePixelDirect(px, py, selectedColor);
+            } else {
+              const key = `${px},${py}`;
+              const isAlreadyStaged = stagedPixels[key] !== undefined;
+              
+              if (isAlreadyStaged) {
+                // Clicking custom-staged pixel a second time toggles its selected state off
+                setStagedPixels((prev) => {
+                  const updated = { ...prev };
+                  delete updated[key];
+                  return updated;
+                });
+                setSelectedPixel(null);
+                triggerBeep(220, "sine", 0.04); // elegant clear tone
+              } else {
+                // Mark/stage new pixel selection
+                setSelectedPixel({ x: px, y: py });
+                triggerBeep(329.63, "sine", 0.04); // subtle clean selection beep
+                setStagedPixels((prev) => ({
+                  ...prev,
+                  [key]: selectedColor,
+                }));
+              }
+            }
+          }
         }
       }
     }
+
+    mouseDownCoords.current = null;
+    dragThresholdPassed.current = false;
     setIsDragging(false);
   };
 
@@ -838,64 +939,70 @@ export default function CanvasBoard({
 
         {/* Selected Pixel Inspector details */}
         {selectedPixel && (
-          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-250 rounded-xl p-2 px-3.5 shadow-md flex items-center justify-between text-[11px] font-mono text-slate-800">
-            <div className="flex items-center gap-2 max-w-[70%] text-slate-700">
+          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-250 rounded-xl p-2 px-3.5 shadow-md flex items-center justify-between text-[11px] font-mono text-slate-800 gap-3 border-l-4 border-l-purple-500 animate-fade-in shadow-lg">
+            <div className="flex items-center gap-2 max-w-[55%] text-slate-700">
               <span 
-                className="w-2.5 h-2.5 rounded-sm border border-slate-300 shrink-0" 
-                style={{ backgroundColor: selectedPixelDetails?.color || "#64748b" }} 
+                className="w-3.5 h-3.5 rounded-sm border border-slate-350 shrink-0 shadow-sm" 
+                style={{ backgroundColor: selectedPixelDetails?.color || "#e2e8f0" }} 
               />
               <div className="truncate">
                 <span>Selected: </span>
-                <strong className="text-indigo-600">[{selectedPixel.x}, {selectedPixel.y}]</strong>
+                <strong className="text-indigo-600 font-bold">[{selectedPixel.x}, {selectedPixel.y}]</strong>
                 {selectedPixelDetails ? (
                   <span> • Owner: <span className="text-purple-600 font-bold">{selectedPixelDetails.owner.substring(0, 8)}...</span></span>
                 ) : (
-                  <span className="text-emerald-600"> • Vacant Space</span>
+                  <span className="text-emerald-600 font-bold"> • Vacant Space</span>
                 )}
               </div>
             </div>
             
-            <button
-              onClick={() => setSelectedPixel(null)}
-              className="text-[10px] text-slate-400 hover:text-slate-700 cursor-pointer"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => paintSinglePixelDirect(selectedPixel.x, selectedPixel.y, selectedColor)}
+                disabled={isSubmitting}
+                className="py-1 px-3 bg-purple-600 hover:bg-purple-550 rounded font-sans font-bold text-2xs text-white cursor-pointer transition-all active:scale-95 flex items-center gap-1.5 shadow"
+              >
+                {selectedColor === "transparent" ? (
+                  <>
+                    <Eraser className="w-3 h-3 text-red-200" />
+                    Erase Now
+                  </>
+                ) : (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full border border-white/40 shrink-0" style={{ backgroundColor: selectedColor }} />
+                    Paint Now
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setSelectedPixel(null)}
+                className="text-[10px] text-slate-500 hover:text-slate-800 cursor-pointer bg-slate-50 hover:bg-slate-100 p-1 px-1.5 rounded border border-slate-200 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Curved Glass Color Dock */}
-        <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full py-2 px-3.5 shadow-xl flex flex-col gap-1.5 text-slate-800">
+        {/* Ultra-Slim Curved Glass Color Dock (Space Saving & High Usability) */}
+        <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full py-1.5 px-3 shadow-xl text-slate-800">
           
-          {/* Progress bar of current painting charges (True wplace.live mechanics) */}
-          <div className="flex items-center justify-between text-[8px] font-mono px-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 uppercase tracking-widest font-semibold">Charges Left:</span>
-              <span className={`font-bold ${charges < 10 ? "text-red-500 animate-pulse" : "text-emerald-600"}`}>
-                {charges}/{maxCharges} px
-              </span>
-            </div>
-            <div className="text-slate-500 text-right">
-              {charges < maxCharges ? (
-                <span className="animate-pulse">Regen in progress (+1 pixel/10s)...</span>
-              ) : (
-                <span className="text-emerald-600 font-bold">READY TO PAINT</span>
-              )}
-            </div>
-          </div>
-
-          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden border border-slate-200/60">
-            <div 
-              className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-emerald-400 rounded-full transition-all duration-300"
-              style={{ width: `${(charges / maxCharges) * 100}%` }}
-            />
-          </div>
-
-          <div className="h-[1px] bg-slate-100 my-0.5"></div>
-
-          {/* Color Pallet Circle Buttons */}
-          <div className="flex items-center justify-between">
+          {/* Main Controls Row */}
+          <div className="flex items-center justify-between gap-1.5">
             <div className="flex-1 flex justify-start items-center gap-1.5 overflow-x-auto scrollbar-none max-w-[88%] pr-2">
+              
+              {/* High-Contrast Space Saver Energy Badge */}
+              <div 
+                className="flex items-center gap-1 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-full py-1 px-2.5 font-mono text-[9px] font-bold shrink-0 shadow-sm"
+                title={`Energy Capacity: ${charges}/${maxCharges} px. Recharges automatically every 10s.`}
+              >
+                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                <span>{charges}/{maxCharges}</span>
+              </div>
+
+              <div className="w-px h-4 bg-slate-200 shrink-0"></div>
+
               {PALETTE.map((color) => (
                 <button
                   key={color}
@@ -930,6 +1037,24 @@ export default function CanvasBoard({
                 </button>
               ))}
             </div>
+
+            <div className="w-px h-5 bg-slate-200 mx-1"></div>
+
+            {/* Toggle Direct Paint Mode with Zap icon */}
+            <button
+              onClick={() => {
+                setDirectPaintMode(!directPaintMode);
+                triggerBeep(directPaintMode ? 440 : 880, "sine", 0.05);
+              }}
+              className={`p-1.5 rounded-full border transition-all cursor-pointer ${
+                directPaintMode 
+                  ? "bg-amber-100 text-amber-600 border-amber-300 shadow-sm scale-110" 
+                  : "bg-slate-50 text-slate-400 border-slate-200 hover:text-slate-800"
+              }`}
+              title={directPaintMode ? "Direct Paint Mode: Active (Clicking the map paints instantly!)" : "Direct Paint Mode: Inactive (Clicking selects a pixel)"}
+            >
+              <Zap className="w-4 h-4" />
+            </button>
 
             <div className="w-px h-5 bg-slate-200 mx-1"></div>
 
