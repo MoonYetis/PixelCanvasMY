@@ -59,10 +59,10 @@ const AVAILABLE_FLAGS = [
 
 // Curated virtual store item list
 const STORE_ITEMS = [
-  { id: "charge_refill", title: "Instant Refuel", desc: "Top up +50 Charges to bypass cooldown constraints", cost_fb: 0.2, cost_my: 50, reward: "refill" },
-  { id: "brush_auras", title: "VIP Highlight Brush", desc: "Show flashy neon aura when custom placing pixels", cost_fb: 1.5, cost_my: 200, reward: "glow" },
-  { id: "max_cap_1", title: "Core Booster limit", desc: "Permanently expand maximum energy capacity to 100", cost_fb: 2.5, cost_my: 500, reward: "cap100" },
-  { id: "max_cap_2", title: "Colossal Reservoir", desc: "Permanently expand maximum energy capacity to 200", cost_fb: 4.0, cost_my: 1000, reward: "cap200" }
+  { id: "charge_refill", title: "Instant Refuel", desc: "Top up +50 Charges to bypass cooldown constraints", cost_px: 15, reward: "refill" },
+  { id: "brush_auras", title: "VIP Highlight Brush", desc: "Show flashy neon aura when custom placing pixels", cost_px: 50, reward: "glow" },
+  { id: "max_cap_1", title: "Core Booster limit", desc: "Permanently expand maximum energy capacity to 100", cost_px: 100, reward: "cap100" },
+  { id: "max_cap_2", title: "Colossal Reservoir", desc: "Permanently expand maximum energy capacity to 200", cost_px: 180, reward: "cap200" }
 ];
 
 export default function App() {
@@ -307,7 +307,7 @@ export default function App() {
     }
   };
 
-  const triggerFaucet = async (tokenType: "FB" | "MOONYETIS") => {
+  const triggerFaucet = async (tokenType: "FB" | "MOONYETIS" | "PX") => {
     if (!address) return;
     setFaucetLoading(tokenType);
     try {
@@ -328,9 +328,43 @@ export default function App() {
     }
   };
 
+  const [isSwapping, setIsSwapping] = useState<boolean>(false);
+
+  const triggerTokenSwap = async (fromCurrency: "FB" | "MOONYETIS", fromAmount: number, pxAmount: number) => {
+    if (!address || !profile) {
+      alert("Please connect the painter wallet first.");
+      return;
+    }
+    setIsSwapping(true);
+    try {
+      const response = await fetch("/api/wallet/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          fromCurrency,
+          fromAmount,
+          pxAmount
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        alert(result.error || "Token swap transaction failed.");
+        return;
+      }
+      alert(result.message || "Swap transaction committed and confirmed on-chain!");
+      await fetchUserProfile();
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.message || "Exchange connection failed.");
+    } finally {
+      setIsSwapping(false);
+    }
+  };
+
   const handlePaintSubmit = async (
     paintPixelsArr: { x: number; y: number; color: string }[],
-    currency: "FB" | "MOONYETIS"
+    currency: "FB" | "MOONYETIS" | "PX"
   ) => {
     try {
       const response = await fetch("/api/pixels/paint", {
@@ -369,40 +403,44 @@ export default function App() {
       return;
     }
 
-    const price = item.cost_fb;
-    if (profile.fb_balance < price) {
-      alert(`⚠️ Insufficient credit balance. Faucet up (+5 FB) by clicking your profile avatar settings at the top right!`);
+    const price = item.cost_px;
+    if ((profile.pixel_tokens_balance || 0) < price) {
+      alert(`⚠️ Insufficient Pixel Tokens balance (Needs: ${price} PX). Buy Pixel Tokens with $FB or MoonYetis in the Store panel!`);
       return;
     }
 
     try {
-      // Simulate client balance deduct via standard paint api sequence or faucet
-      // For instant response, we directly update max energy / refill energy locally
+      const response = await fetch("/api/wallet/buy-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, itemId: item.id, costPx: price })
+      });
+
+      if (!response.ok) {
+        const errVal = await response.json();
+        alert(errVal.error || "Unlock failed.");
+        return;
+      }
+
       if (item.reward === "refill") {
         setCharges(maxCharges);
         alert(`⚡ Refueling successful! Your energy has been boosted back to ${maxCharges}/${maxCharges} Charges.`);
       } else if (item.reward === "cap100") {
         setMaxCharges(100);
         setCharges(100);
-        alert(`⚡ core boosted! Memory limit expanded to 100 max charges.`);
+        alert(`⚡ Core boosted! Memory limit expanded to 100 max charges.`);
       } else if (item.reward === "cap200") {
         setMaxCharges(200);
         setCharges(200);
-        alert(`⚡ colossal booster! Capacity upgraded to 200 max charges.`);
+        alert(`⚡ Colossal booster! Capacity upgraded to 200 max charges.`);
       } else if (item.reward === "glow") {
         alert("✨ Neon Highlight Brush acquired! The stroke edges will now glow during pixel edits.");
       }
 
-      // Fetch updated balances
-      const faucetRes = await fetch("/api/wallet/sim-faucet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, type: "CHARGE_UPGRADE_DEDUCT" }), // will trigger balance sync
-      });
       await fetchUserProfile();
-
     } catch (err) {
       console.error(err);
+      alert("Item purchase failed.");
     }
   };
 
@@ -472,183 +510,17 @@ export default function App() {
           charges={charges}
           maxCharges={maxCharges}
           onPaintPixels={handlePaintSubmit}
-          onTriggerStore={() => setActiveMenuOverlay("store")}
+          onTriggerStore={() => setActiveMenuOverlay(activeMenuOverlay === "store" ? null : "store")}
           onTriggerProfile={() => setShowProfileSelector(true)}
+          activeMenuOverlay={activeMenuOverlay}
+          onToggleMenuOverlay={(overlay) => setActiveMenuOverlay(activeMenuOverlay === overlay ? null : overlay)}
+          onlineCount={onlineCount}
         />
       </div>
 
-      {/* 2. FLOATING HEADER BAR: Pinned at top with modern blur backdrop */}
-      <header className="absolute top-4 left-4 right-4 z-30 pointer-events-none">
-        <div className="max-w-[1550px] mx-auto flex items-center justify-between gap-4 pointer-events-auto">
-          
-          {/* Logo & Online Indicators */}
-          <div className="bg-white/90 backdrop-blur-lg border border-slate-200 rounded-full px-4 py-2 flex items-center gap-3 shadow-lg">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center shadow">
-              <span className="font-sans font-black text-xs text-white uppercase tracking-tighter">WP</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-black tracking-widest text-slate-900 leading-none">
-                WPLACE <span className="text-[10px] text-purple-600 font-mono font-medium lowercase">• moon yetis</span>
-              </span>
-              <span className="text-[9px] font-mono text-slate-500 flex items-center gap-1 mt-0.5">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                {onlineCount} painters online
-              </span>
-            </div>
-          </div>
-
-          {/* Active Player Profile bubble (Clicking opens customization settings selector) */}
-          <div className="flex items-center gap-2">
-            
-            {/* Minimal ticker display */}
-            <div className="hidden sm:flex flex-col items-end justify-center bg-white/90 backdrop-blur-md border border-slate-200 rounded-full px-4.5 py-1 text-right shadow-md">
-              <span className="text-[8px] font-mono text-slate-450 uppercase tracking-wider leading-none">Wallet balance</span>
-              <span className="text-[11px] font-mono font-bold text-yellow-600 mt-0.5">
-                {profile ? profile.fb_balance.toFixed(2) : "0.00"} Coins
-              </span>
-            </div>
-
-            <button
-              onClick={() => setShowProfileSelector(true)}
-              className="bg-white/90 hover:bg-slate-50 border border-slate-200 hover:border-purple-300 rounded-full pl-3.5 pr-2 py-1.5 flex items-center gap-2.5 transition-all cursor-pointer shadow-md active:scale-95"
-              title="Click to customize profile nation details"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm" role="img" aria-label="country flag">
-                  {profile?.flag_emoji || "🇺🇸"}
-                </span>
-                <span className="text-xs font-bold font-mono tracking-tight text-slate-800 max-w-[90px] truncate">
-                  {profile?.username || "Setup Name"}
-                </span>
-              </div>
-              <div className="w-6.5 h-6.5 rounded-full bg-gradient-to-br from-purple-500 to-indigo-500 flex items-center justify-center text-white border border-white/20 shadow">
-                <User className="w-3.5 h-3.5 text-white" />
-              </div>
-            </button>
-          </div>
-
-        </div>
-      </header>
-
-      {/* 3. VERTICAL SIDEBAR ACTIONS DECK (Left side circular floating controllers) */}
-      <div className="absolute top-24 left-4 z-30 flex flex-col gap-2.5 pointer-events-auto">
-        <div className="bg-white/90 backdrop-blur-md border border-slate-200 rounded-2xl p-1.5 flex flex-col gap-2 shadow-lg">
-          
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "dashboard" ? null : "dashboard");
-              triggerTone(784, "sine", 0.05); // High modern chime
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "dashboard"
-                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Painter Dashboard (Real-time Balances, Faucet & Cooldowns)"
-          >
-            <LayoutDashboard className="w-4 h-4 animate-pulse text-indigo-500 hover:text-indigo-600" style={{ color: activeMenuOverlay === "dashboard" ? "#ffffff" : "" }} />
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "store" ? null : "store");
-              triggerTone(659, "sine", 0.05);
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "store"
-                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Store catalogue"
-          >
-            <ShoppingBag className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "leaderboard" ? null : "leaderboard");
-              triggerTone(587, "sine", 0.05);
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "leaderboard"
-                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Leaderboard ranks"
-          >
-            <Trophy className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "chat" ? null : "chat");
-              triggerTone(440, "sine", 0.05);
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "chat"
-                ? "bg-purple-600 text-white shadow"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Real-time Chatroom Collab"
-          >
-            <MessageSquare className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-505"></span>
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "feed" ? null : "feed");
-              triggerTone(523, "sine", 0.05);
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "feed"
-                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Notification alerts"
-          >
-            <Activity className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveMenuOverlay(activeMenuOverlay === "rules" ? null : "rules");
-              triggerTone(493, "sine", 0.05);
-            }}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "rules"
-                ? "bg-purple-600 text-white shadow shadow-purple-600/25"
-                : "text-slate-500 hover:text-slate-950 hover:bg-slate-50"
-            }`}
-            title="Wplace Community Rules"
-          >
-            <BookOpen className="w-4 h-4" />
-          </button>
-
-          <div className="h-px bg-slate-200 my-1 mx-2" />
-
-          {/* Dev Simulated RPC node details Console */}
-          <button
-            onClick={() => setActiveMenuOverlay(activeMenuOverlay === "developer_rpc" ? null : "developer_rpc")}
-            className={`p-3 rounded-xl transition-all cursor-pointer relative flex items-center justify-center ${
-              activeMenuOverlay === "developer_rpc"
-                ? "bg-indigo-600 text-white shadow"
-                : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
-            }`}
-            title="Dev Simulated RPC Console"
-          >
-            <TerminalIcon className="w-4 h-4" />
-          </button>
-
-        </div>
-      </div>
-
-      {/* 4. MODULAR MENU OVERLAYS: Slide-in white card overlays */}
+      {/* 4. MODULAR MENU OVERLAYS: Slide-in white card overlays (Right-aligned next to controls deck) */}
       {activeMenuOverlay && (
-        <div className="absolute top-24 left-20 z-30 w-full max-w-sm max-h-[75vh] select-none pointer-events-auto animate-fade-in">
+        <div className="absolute top-20 right-20 z-30 w-full max-w-sm max-h-[75vh] select-none pointer-events-auto animate-fade-in">
           <div className="bg-white/95 backdrop-blur-xl border border-slate-200/90 rounded-2xl p-4 shadow-xl flex flex-col justify-between max-h-[75vh] overflow-y-auto scrollbar-none text-slate-800">
             
             {/* Slide heading */}
@@ -735,38 +607,106 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Real-time assets balance vault */}
+                {/* Premium Pixel Token Balance */}
+                <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-3.5 text-white flex justify-between items-center shadow-md shadow-purple-600/10">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-purple-200 block font-bold leading-none">Internal Draw Currency</span>
+                    <strong className="text-xl font-black tracking-tight block mt-1">
+                      {profile ? (profile.pixel_tokens_balance ?? 150) : 150} PX
+                    </strong>
+                    <span className="text-[9px] text-indigo-100/80 font-sans block mt-1">
+                      Used for drawings & store items (1 PX = 1 pixel)
+                    </span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center">
+                    <Coins className="w-6 h-6 text-yellow-300 animate-pulse" />
+                  </div>
+                </div>
+
+                {/* Real-time trading assets balance vault */}
                 <div className="space-y-1.5">
-                  <span className="text-[9px] font-mono text-slate-400 uppercase tracking-widest block font-bold">Your Wallet Balance</span>
+                  <span className="text-[9px] font-mono text-slate-400 uppercase tracking-widest block font-bold">Your Trading Balances</span>
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="p-3 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
-                      <span className="text-[9px] font-mono text-slate-400 font-bold block">Wace Coins (FB)</span>
-                      <strong className="text-yellow-600 font-black text-sm tracking-tight block mt-1">
+                    <div className="p-2.5 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
+                      <span className="text-[9px] font-mono text-slate-400 font-bold block">Coins ($FB)</span>
+                      <strong className="text-yellow-600 font-black text-sm tracking-tight block mt-0.5">
                         {profile ? profile.fb_balance.toFixed(2) : "0.00"} W
                       </strong>
                     </div>
 
-                    <div className="p-3 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
+                    <div className="p-2.5 bg-white border border-slate-150 rounded-xl shadow-2xs flex flex-col justify-between">
                       <span className="text-[9px] font-mono text-slate-400 font-bold block">Yeti Clans (MY)</span>
-                      <strong className="text-purple-600 font-black text-sm tracking-tight block mt-1">
-                        {profile ? profile.my_balance.toLocaleString() : "0"} MY
+                      <strong className="text-purple-600 font-black text-sm tracking-tight block mt-0.5 font-mono">
+                        {profile ? (profile.mooneyetis_balance ?? profile.my_balance ?? 0).toLocaleString() : "0"} MY
                       </strong>
                     </div>
                   </div>
                 </div>
 
+                {/* Token Swap Box */}
+                <div className="border border-slate-200 bg-slate-50/50 p-2.5 rounded-xl space-y-2">
+                  <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest font-bold block">Pixel Token Exchange (Buy PX)</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-white border border-slate-200/80 p-2 rounded-lg flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-700 block">0.5 FB ➔ 50 PX</span>
+                      <button
+                        onClick={() => triggerTokenSwap("FB", 0.5, 50)}
+                        disabled={isSwapping}
+                        className="mt-1.5 py-1 px-1.5 bg-yellow-50 hover:bg-yellow-105 text-yellow-850 text-[10px] rounded font-bold transition-all cursor-pointer text-center active:scale-95 border border-yellow-250/65"
+                      >
+                        {isSwapping ? "Saving..." : "Swap 0.5 FB"}
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200/80 p-2 rounded-lg flex flex-col justify-between relative overflow-hidden">
+                      <div className="absolute top-0 right-0 bg-emerald-500 text-white font-mono text-[7px] px-1 py-0.2 rounded-bl scale-90">Bonus</div>
+                      <span className="text-[10px] font-black text-slate-700 block">1.0 FB ➔ 120 PX</span>
+                      <button
+                        onClick={() => triggerTokenSwap("FB", 1.0, 120)}
+                        disabled={isSwapping}
+                        className="mt-1.5 py-1 px-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] rounded font-bold transition-all cursor-pointer text-center active:scale-95 border border-emerald-250/65"
+                      >
+                        {isSwapping ? "Saving..." : "Swap 1.0 FB"}
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200/80 p-2 rounded-lg flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-slate-700 block">250 MY ➔ 50 PX</span>
+                      <button
+                        onClick={() => triggerTokenSwap("MOONYETIS", 250, 50)}
+                        disabled={isSwapping}
+                        className="mt-1.5 py-1 px-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 text-[10px] rounded font-bold transition-all cursor-pointer text-center active:scale-95 border border-purple-250/65"
+                      >
+                        {isSwapping ? "Saving..." : "Swap 250 MY"}
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200/80 p-2 rounded-lg flex flex-col justify-between relative overflow-hidden">
+                      <div className="absolute top-0 right-0 bg-purple-500 text-white font-mono text-[7px] px-1 py-0.2 rounded-bl scale-90">Bonus</div>
+                      <span className="text-[10px] font-black text-slate-700 block">500 MY ➔ 120 PX</span>
+                      <button
+                        onClick={() => triggerTokenSwap("MOONYETIS", 500, 120)}
+                        disabled={isSwapping}
+                        className="mt-1.5 py-1 px-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-805 text-[10px] rounded font-bold transition-all cursor-pointer text-center active:scale-95 border border-indigo-250/65"
+                      >
+                        {isSwapping ? "Saving..." : "Swap 500 MY"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Instant Taproot Faucets (No configuration or metadata required!) */}
-                <div className="p-3 bg-slate-50/60 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="p-3 bg-slate-50/60 border border-slate-250/60 rounded-xl space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest font-bold">Ledger Faucet</span>
-                    <span className="text-[8px] bg-emerald-50 text-emerald-600 border border-emerald-100 rounded px-1 text-center leading-none font-bold">Unlimited Fuel</span>
+                    <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest font-bold">Dev Faucets</span>
+                    <span className="text-[8px] bg-red-50 text-red-650 border border-red-105 rounded px-1 font-bold">Simulated assets</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     <button
                       onClick={() => triggerFaucet("FB")}
                       disabled={faucetLoading !== null}
-                      className="py-1.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-750 border border-yellow-200 max-w-full font-mono text-[10px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center gap-1 shadow-2xs"
+                      className="py-1 bg-yellow-50 hover:bg-yellow-105 text-yellow-750 border border-yellow-200 font-mono text-[9px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center shadow-2xs"
                     >
                       {faucetLoading === "FB" ? "Adding..." : "+5.0 Coins"}
                     </button>
@@ -774,9 +714,17 @@ export default function App() {
                     <button
                       onClick={() => triggerFaucet("MOONYETIS")}
                       disabled={faucetLoading !== null}
-                      className="py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-750 border border-purple-200 max-w-full font-mono text-[10px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center gap-1 shadow-2xs"
+                      className="py-1 bg-purple-50 hover:bg-purple-105 text-purple-750 border border-purple-200 font-mono text-[9px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center shadow-2xs"
                     >
                       {faucetLoading === "MOONYETIS" ? "Adding..." : "+2.5K Yeti"}
+                    </button>
+
+                    <button
+                      onClick={() => triggerFaucet("PX")}
+                      disabled={faucetLoading !== null}
+                      className="py-1 bg-emerald-50 hover:bg-emerald-105 text-emerald-700 border border-emerald-200 font-mono text-[9px] font-bold rounded cursor-pointer transition-all active:scale-95 text-center flex items-center justify-center shadow-2xs"
+                    >
+                      {faucetLoading === "PX" ? "Adding..." : "+100 PX"}
                     </button>
                   </div>
                 </div>
@@ -857,16 +805,54 @@ export default function App() {
 
             {/* OVERLAY PANEL A: STORE CATELOG */}
             {activeMenuOverlay === "store" && (
-              <div className="space-y-4 text-slate-800">
-                <p className="text-[11px] text-slate-500 leading-normal">
-                  Refuel charges or unlock permanent upgrades to boost your collaborative painting score on the map.
+              <div className="space-y-4 text-slate-800 animate-fade-in">
+                <p className="text-[11px] text-slate-500 leading-normal border-b border-slate-100 pb-2">
+                  Exchange your coins or MoonYetis to buy Pixel Tokens (PX), then unlock high-fidelity boosters and energy upgrades!
                 </p>
 
+                {/* Swapper segment in the Store directly! */}
+                <div className="border border-purple-100 bg-purple-50/20 p-2.5 rounded-xl space-y-2">
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span className="text-[9px] font-mono uppercase tracking-widest font-extrabold text-purple-600">Quick Exchange</span>
+                    <span className="font-mono text-[10px] font-bold text-slate-550">
+                      Balance: <span className="text-purple-600 font-extrabold">{profile ? (profile.pixel_tokens_balance ?? 150) : 150} PX</span>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-white border border-slate-150 p-2 rounded-lg flex flex-col justify-between text-2xs">
+                      <strong className="text-slate-800 block">0.5 FB ➔ 50 PX</strong>
+                      <button
+                        onClick={() => triggerTokenSwap("FB", 0.5, 50)}
+                        disabled={isSwapping}
+                        className="mt-1 px-1.5 py-0.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-850 text-[9px] rounded font-bold border border-yellow-250/50 cursor-pointer"
+                      >
+                        Swap 0.5 FB
+                      </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-150 p-2 rounded-lg flex flex-col justify-between text-2xs relative overflow-hidden">
+                      <div className="absolute top-0 right-0 bg-emerald-500 text-white font-mono text-[6px] px-1 rounded-bl">Bonus</div>
+                      <strong className="text-slate-800 block">1.0 FB ➔ 120 PX</strong>
+                      <button
+                        onClick={() => triggerTokenSwap("FB", 1.0, 120)}
+                        disabled={isSwapping}
+                        className="mt-1 px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[9px] rounded font-bold border border-emerald-250/50 cursor-pointer"
+                      >
+                        Swap 1.0 FB
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main Upgrades Grid */}
                 <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase text-slate-400 tracking-widest block font-bold">Premium Upgrades</span>
+
                   {STORE_ITEMS.map((item) => (
                     <div 
                       key={item.id} 
-                      className="bg-slate-50 border border-slate-200 hover:bg-slate-100/60 rounded-xl p-3 flex flex-col justify-between transition-all gap-2"
+                      className="bg-slate-50 border border-slate-200 hover:bg-slate-105/50 rounded-xl p-3 flex flex-col justify-between transition-all gap-2"
                     >
                       <div className="flex justify-between items-start">
                         <div>
@@ -881,10 +867,10 @@ export default function App() {
                       </div>
 
                       <div className="flex justify-between items-center border-t border-slate-150 pt-2 mt-1">
-                        <span className="text-2xs font-mono text-slate-500">COST: <strong className="text-yellow-600">{item.cost_fb} Coins</strong></span>
+                        <span className="text-2xs font-mono text-slate-500">COST: <strong className="text-purple-600 font-extrabold">{item.cost_px} PX</strong></span>
                         <button
                           onClick={() => handlePurchaseItem(item)}
-                          className="py-1 px-3 bg-purple-600 hover:bg-purple-500 rounded text-2xs font-semibold text-white cursor-pointer transition-all active:scale-95 flex items-center gap-1 shadow shadow-purple-600/10"
+                          className="py-1 px-3 bg-purple-600 hover:bg-purple-500 rounded text-2xs font-bold text-white cursor-pointer transition-all active:scale-95 flex items-center gap-1 shadow shadow-purple-600/10"
                         >
                           Unlock
                           <ChevronRight className="w-3 h-3" />

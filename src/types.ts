@@ -3,8 +3,8 @@ export interface PixelData {
   y: number;
   color: string;
   owner: string; // bc1p... Address
-  pricePaid: number; // FB or Moonyetis
-  currency: 'FB' | 'MOONYETIS';
+  pricePaid: number; // FB, Moonyetis or PX
+  currency: 'FB' | 'MOONYETIS' | 'PX';
   timestamp: number;
 }
 
@@ -13,6 +13,7 @@ export interface UserProfile {
   address: string; // bc1p... taprootaddress
   fb_balance: number;
   mooneyetis_balance: number;
+  pixel_tokens_balance: number;
   total_pixels_owned: number;
   created_at: number;
   flag_emoji?: string;
@@ -23,7 +24,7 @@ export interface PaintTransaction {
   address: string;
   pixels: { x: number; y: number; color: string }[];
   totalCost: number;
-  currency: 'FB' | 'MOONYETIS';
+  currency: 'FB' | 'MOONYETIS' | 'PX';
   timestamp: number;
   status: 'pending' | 'confirmed' | 'failed';
   confirmations: number;

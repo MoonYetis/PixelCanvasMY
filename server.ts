@@ -141,6 +141,7 @@ if (Object.keys(usersRecord).length === 0) {
     address: adminAddr,
     fb_balance: 50.0,
     mooneyetis_balance: 500000,
+    pixel_tokens_balance: 10000,
     total_pixels_owned: 121,
     created_at: Date.now()
   };
@@ -323,10 +324,14 @@ async function startServer() {
         address: address,
         fb_balance: 5.5, // 5.5 FB starter balance for instant fun
         mooneyetis_balance: 2500, // 2500 moon yetis tokens
+        pixel_tokens_balance: 150, // 150 Pixel Tokens starter balance
         total_pixels_owned: 0,
         flag_emoji: "🇺🇸", // default flag
         created_at: Date.now()
       };
+      saveJSON(FILE_USERS, usersRecord);
+    } else if (usersRecord[address].pixel_tokens_balance === undefined) {
+      usersRecord[address].pixel_tokens_balance = 150;
       saveJSON(FILE_USERS, usersRecord);
     }
     res.json(usersRecord[address]);
@@ -364,6 +369,7 @@ async function startServer() {
         address: address,
         fb_balance: 0,
         mooneyetis_balance: 0,
+        pixel_tokens_balance: 150,
         total_pixels_owned: 0,
         created_at: Date.now()
       };
@@ -371,12 +377,75 @@ async function startServer() {
 
     if (type === "FB") {
       usersRecord[address].fb_balance += 5.0;
-    } else {
+    } else if (type === "MOONYETIS") {
       usersRecord[address].mooneyetis_balance += 2500;
+    } else if (type === "PX") {
+      if (usersRecord[address].pixel_tokens_balance === undefined) {
+        usersRecord[address].pixel_tokens_balance = 0;
+      }
+      usersRecord[address].pixel_tokens_balance += 100; // Gift 100 PX on PX faucet request!
     }
 
     saveJSON(FILE_USERS, usersRecord);
     res.json({ success: true, profile: usersRecord[address] });
+  });
+
+  // API - Exchange $FB or MOONYETIS into Pixel Tokens (PX)
+  app.post("/api/wallet/exchange", (req, res) => {
+    const { address, fromCurrency, fromAmount, pxAmount } = req.body;
+    if (!address || !address.startsWith("bc1p")) {
+      return res.status(400).json({ error: "Invalid Taproot address." });
+    }
+    const user = usersRecord[address];
+    if (!user) {
+      return res.status(404).json({ error: "User profile not established." });
+    }
+
+    if (fromCurrency === "FB") {
+      if (user.fb_balance < fromAmount) {
+        return res.status(400).json({ error: `Insufficient FB balance. Needed: ${fromAmount} FB, Have: ${user.fb_balance.toFixed(3)} FB` });
+      }
+      user.fb_balance -= fromAmount;
+    } else if (fromCurrency === "MOONYETIS") {
+      if (user.mooneyetis_balance < fromAmount) {
+        return res.status(400).json({ error: `Insufficient MoonYeti balance. Needed: ${fromAmount} MY, Have: ${user.mooneyetis_balance} MY` });
+      }
+      user.mooneyetis_balance -= fromAmount;
+    } else {
+      return res.status(400).json({ error: "Invalid source currency." });
+    }
+
+    if (user.pixel_tokens_balance === undefined) {
+      user.pixel_tokens_balance = 0;
+    }
+    user.pixel_tokens_balance += pxAmount;
+
+    saveJSON(FILE_USERS, usersRecord);
+    res.json({ success: true, profile: user, message: `Successfully swapped ${fromAmount} ${fromCurrency} for ${pxAmount} PX!` });
+  });
+
+  // API - Deduct Pixel Tokens on upgrade item purchase
+  app.post("/api/wallet/buy-item", (req, res) => {
+    const { address, itemId, costPx } = req.body;
+    if (!address || !address.startsWith("bc1p")) {
+      return res.status(400).json({ error: "Invalid Taproot address." });
+    }
+    const user = usersRecord[address];
+    if (!user) {
+      return res.status(404).json({ error: "User profile not established." });
+    }
+
+    if (user.pixel_tokens_balance === undefined) {
+      user.pixel_tokens_balance = 150;
+    }
+
+    if (user.pixel_tokens_balance < costPx) {
+      return res.status(400).json({ error: `Insufficient Pixel Tokens. Needs: ${costPx} PX, Has: ${user.pixel_tokens_balance} PX.` });
+    }
+    user.pixel_tokens_balance -= costPx;
+
+    saveJSON(FILE_USERS, usersRecord);
+    res.json({ success: true, profile: user, message: `Successfully unlocked item ${itemId}!` });
   });
 
   // API - Submit pixel block paint action
@@ -390,34 +459,31 @@ async function startServer() {
       return res.status(400).json({ error: "No pixels specified." });
     }
 
-    const pricePerPixel = currency === "MOONYETIS" ? 50 : 0.01; // 50 MoonYetis vs 0.01 FB (Discounted option)
-    const cost = pixels.length * pricePerPixel;
+    // Cost to paint is exactly 1 Pixel Token (PX) per pixel!
+    const cost = pixels.length * 1; 
 
     const user = usersRecord[address];
     if (!user) {
       return res.status(404).json({ error: "User profile not established." });
     }
 
-    if (currency === "MOONYETIS") {
-      if (user.mooneyetis_balance < cost) {
-        return res.status(400).json({ error: `Insufficient MoonYetis. Cost: ${cost} MOONYETIS. Balance: ${user.mooneyetis_balance}` });
-      }
-      user.mooneyetis_balance -= cost;
-    } else {
-      if (user.fb_balance < cost) {
-        return res.status(400).json({ error: `Insufficient Fractal Bitcoin (FB). Cost: ${cost} FB. Balance: ${user.fb_balance}` });
-      }
-      user.fb_balance -= cost;
+    if (user.pixel_tokens_balance === undefined) {
+      user.pixel_tokens_balance = 150; // Fallback initialization
     }
 
+    if (user.pixel_tokens_balance < cost) {
+      return res.status(400).json({ error: `Insufficient Pixel Tokens (PX). Cost: ${cost} PX. Balance: ${user.pixel_tokens_balance} PX. Go to Painter Dashboard to buy or swap some!` });
+    }
+    user.pixel_tokens_balance -= cost;
+
     // Design: Create a pending payment broadcast transaction which confirms on next block (30 sec interval)
-    const txid = "tx" + Math.random().toString(36).substring(2, 15) + "fb2024" + Math.random().toString(36).substring(2, 10);
+    const txid = "tx" + Math.random().toString(36).substring(2, 15) + "px2026" + Math.random().toString(36).substring(2, 10);
     const newTx: PaintTransaction = {
       txid,
       address,
       pixels,
       totalCost: cost,
-      currency,
+      currency: "PX",
       timestamp: Date.now(),
       status: "pending",
       confirmations: 0

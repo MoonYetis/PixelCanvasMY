@@ -16,7 +16,25 @@ import {
   Shield,
   HelpCircle,
   HelpCircle as InfoIcon,
-  Zap
+  Zap,
+  MapPin,
+  MoreVertical,
+  X,
+  ChevronsUpDown,
+  Star,
+  Share2,
+  RotateCcw,
+  RotateCw,
+  Image as ImageIcon,
+  Paintbrush,
+  ShoppingCart,
+  Globe,
+  MessageSquare,
+  Activity,
+  Terminal as TerminalIcon,
+  Compass,
+  Info,
+  Flame
 } from "lucide-react";
 
 interface CanvasBoardProps {
@@ -25,9 +43,12 @@ interface CanvasBoardProps {
   userProfile: UserProfile | null;
   charges: number;
   maxCharges: number;
-  onPaintPixels: (pixels: { x: number; y: number; color: string }[], currency: "FB" | "MOONYETIS") => Promise<any>;
+  onPaintPixels: (pixels: { x: number; y: number; color: string }[], currency: "FB" | "MOONYETIS" | "PX") => Promise<any>;
   onTriggerStore: () => void;
   onTriggerProfile: () => void;
+  activeMenuOverlay?: string | null;
+  onToggleMenuOverlay?: (overlay: string) => void;
+  onlineCount?: number;
 }
 
 const PALETTE = [
@@ -106,6 +127,13 @@ const PLACES_LABELS = [
   { text: "INDIAN OCEAN", x: 680, y: 630 }
 ];
 
+const HOTSPOTS = [
+  { id: "europe", x: 490, y: 230, label: "Eurasia Core", count: 8, isMajor: true },
+  { id: "south-america", x: 280, y: 630, label: "South Delta", count: 1, isMajor: false },
+  { id: "africa", x: 500, y: 570, label: "African Apex", count: 1, isMajor: false },
+  { id: "asia-india", x: 680, y: 630, label: "Indian Ocean Hub", count: 3, isMajor: false }
+];
+
 export default function CanvasBoard({
   pixels,
   currentAddress,
@@ -115,6 +143,9 @@ export default function CanvasBoard({
   onPaintPixels,
   onTriggerStore,
   onTriggerProfile,
+  activeMenuOverlay = null,
+  onToggleMenuOverlay,
+  onlineCount = 142,
 }: CanvasBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -133,14 +164,36 @@ export default function CanvasBoard({
   const [selectedColor, setSelectedColor] = useState<string>("#9333ea"); // Default purple
   const [hoveredPixel, setHoveredPixel] = useState<{ x: number; y: number } | null>(null);
   const [selectedPixel, setSelectedPixel] = useState<{ x: number; y: number } | null>(null);
+  const [isEditingMode, setIsEditingMode] = useState<boolean>(false);
+  const [secondsLeft, setSecondsLeft] = useState<number>(10);
+
+  useEffect(() => {
+    if (charges >= maxCharges) {
+      setSecondsLeft(0);
+    } else if (secondsLeft === 0) {
+      setSecondsLeft(10);
+    }
+  }, [charges, maxCharges]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (charges >= maxCharges) return 0;
+        if (prev <= 1) return 10;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [charges, maxCharges]);
 
   // Coordinates warping teleporter
   const [teleportX, setTeleportX] = useState<number>(490);
   const [teleportY, setTeleportY] = useState<number>(230);
+  const [showTeleporter, setShowTeleporter] = useState<boolean>(false);
 
   // Staging checkout basket
   const [stagedPixels, setStagedPixels] = useState<Record<string, string>>({}); // "x,y" : hexColor
-  const [chosenCurrency, setChosenCurrency] = useState<"FB" | "MOONYETIS">("FB");
+  const chosenCurrency = "PX"; // Only Pixel Tokens (PX) used for drawing!
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Visual helper toggles
@@ -323,6 +376,71 @@ export default function CanvasBoard({
     };
   }, []);
 
+  // Performance-optimized native wheel event listener that completely bypasses
+  // Chrome/Safari "passive listener" scroll delays and enables ultra-fluid zoom transitions.
+  const stateRef = useRef({ zoom, panX, panY });
+  useEffect(() => {
+    stateRef.current = { zoom, panX, panY };
+  }, [zoom, panX, panY]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const { zoom: curZoom, panX: curPanX, panY: curPanY } = stateRef.current;
+
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const pixelX = (mouseX - curPanX) / curZoom;
+      const pixelY = (mouseY - curPanY) / curZoom;
+
+      const delta = -e.deltaY;
+      
+      // Compute delta-proportional speed multiplier (feels amazing on both trackpads and mouse-wheels)
+      const intensity = Math.min(Math.abs(delta) / 100, 2.0);
+      const factor = 1 + 0.12 * intensity;
+
+      let newZoom = curZoom;
+      if (delta > 0) {
+        newZoom = curZoom * factor;
+      } else {
+        newZoom = curZoom / factor;
+      }
+
+      if (newZoom > 120) newZoom = 120;
+      if (newZoom < 0.4) newZoom = 0.4;
+      newZoom = Number(newZoom.toFixed(2));
+
+      const newPanX = mouseX - pixelX * newZoom;
+      const newPanY = mouseY - pixelY * newZoom;
+
+      setZoom(newZoom);
+      setPanX(newPanX);
+      setPanY(newPanY);
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
+  // Discretize zoom level to run the heavy canvas drawing logic ONLY when crossing major thresholds.
+  // This achieves flawless 60+ FPS zoom performance, offloading continuous scaling to the GPU via CSS!
+  const getDiscretizedZoom = (z: number) => {
+    if (z < 3.0) return 1.0;
+    if (z < 6.0) return 4.0;
+    if (z < 12.0) return 8.0;
+    if (z < 24.0) return 16.0;
+    return 32.0;
+  };
+  const drawZoom = getDiscretizedZoom(zoom);
+
   // Canvas drawing effect handles layers of geography and painted inputs
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -338,71 +456,88 @@ export default function CanvasBoard({
     // 2. Draw map layer (Tactical / Satellite / Voyager / Classic hand-drawn outline fallback)
     let mapDrawSuccess = false;
 
-    if (mapMode === "tactical" && tacticalCanvas) {
-      ctx.drawImage(tacticalCanvas, 0, 0, canvas.width, canvas.height);
-      mapDrawSuccess = true;
-    } else if (mapMode === "satellite" && satelliteCanvas) {
-      ctx.drawImage(satelliteCanvas, 0, 0, canvas.width, canvas.height);
-      mapDrawSuccess = true;
-    } else if (mapMode === "voyager" && voyagerCanvas) {
-      ctx.drawImage(voyagerCanvas, 0, 0, canvas.width, canvas.height);
-      mapDrawSuccess = true;
-    }
+    if (drawZoom < 3.0) {
+      if (mapMode === "tactical" && tacticalCanvas) {
+        ctx.drawImage(tacticalCanvas, 0, 0, canvas.width, canvas.height);
+        mapDrawSuccess = true;
+      } else if (mapMode === "satellite" && satelliteCanvas) {
+        ctx.drawImage(satelliteCanvas, 0, 0, canvas.width, canvas.height);
+        mapDrawSuccess = true;
+      } else if (mapMode === "voyager" && voyagerCanvas) {
+        ctx.drawImage(voyagerCanvas, 0, 0, canvas.width, canvas.height);
+        mapDrawSuccess = true;
+      }
 
-    // Classic low-polygon vector lines as fallback or explicit choice
-    if (!mapDrawSuccess || mapMode === "classic") {
-      CONTINENTS.forEach((poly) => {
-        // Soft drop shadow for classic islands
-        ctx.shadowColor = "rgba(15, 23, 42, 0.05)";
-        ctx.shadowBlur = 4;
+      // Classic low-polygon vector lines as fallback or explicit choice
+      if (!mapDrawSuccess || mapMode === "classic") {
+        CONTINENTS.forEach((poly) => {
+          // Soft drop shadow for classic islands
+          ctx.shadowColor = "rgba(15, 23, 42, 0.05)";
+          ctx.shadowBlur = 4;
 
-        ctx.fillStyle = "#f1f5f9"; // Soft modern silver terrestrial land
-        ctx.strokeStyle = "rgba(99, 102, 241, 0.3)"; // Radiant continent coast lines
-        ctx.lineWidth = 1;
+          ctx.fillStyle = "#f1f5f9"; // Soft modern silver terrestrial land
+          ctx.strokeStyle = "rgba(99, 102, 241, 0.3)"; // Radiant continent coast lines
+          ctx.lineWidth = 1;
 
+          ctx.beginPath();
+          if (poly.length > 0) {
+            ctx.moveTo(poly[0].x, poly[0].y);
+            poly.slice(1).forEach((pt) => ctx.lineTo(pt.x, pt.y));
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Reset shadows
+          ctx.shadowBlur = 0;
+        });
+      }
+
+      // 3. Draw blueprint style coordinates lat/long lines (extremely sleek overlay in light gray)
+      ctx.strokeStyle = "rgba(99, 102, 241, 0.07)";
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i <= canvas.width; i += 50) {
         ctx.beginPath();
-        if (poly.length > 0) {
-          ctx.moveTo(poly[0].x, poly[0].y);
-          poly.slice(1).forEach((pt) => ctx.lineTo(pt.x, pt.y));
-        }
-        ctx.closePath();
-        ctx.fill();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, canvas.height);
         ctx.stroke();
 
-        // Reset shadows
-        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(canvas.width, i);
+        ctx.stroke();
+      }
+
+      // 4. Draw labels for place identification
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      ctx.font = "bold 9px monospace";
+      ctx.fillStyle = "rgba(71, 85, 105, 0.55)"; // Sleek translucent labels
+      PLACES_LABELS.forEach((lbl) => {
+        ctx.fillText(lbl.text, lbl.x, lbl.y);
       });
     }
 
-    // 3. Draw blueprint style coordinates lat/long lines (extremely sleek overlay in light gray)
-    ctx.strokeStyle = "rgba(99, 102, 241, 0.07)";
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= canvas.width; i += 50) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, canvas.height);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(canvas.width, i);
-      ctx.stroke();
-    }
-
-    // 4. Draw labels for place identification
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.font = "bold 9px monospace";
-    ctx.fillStyle = "rgba(71, 85, 105, 0.55)"; // Sleek translucent labels
-    PLACES_LABELS.forEach((lbl) => {
-      ctx.fillText(lbl.text, lbl.x, lbl.y);
-    });
-
     // 5. Draw high precision 1px pixel-aligned cell boundary grids (Dynamic adaptive intensity based on zoom level)
-    if (showGridLines || zoom >= 4) {
-      // Very soft, light, elegant, high-contrast grid lines for precise placement reference
-      ctx.strokeStyle = zoom >= 7 ? "rgba(100, 116, 139, 0.18)" : "rgba(100, 116, 139, 0.08)";
-      ctx.lineWidth = 0.12;
+    if (drawZoom >= 3.0 && (showGridLines || drawZoom >= 4)) {
+      // Crisp, high-contrast grid lines for precise alignment reference
+      if (showGridLines) {
+        ctx.strokeStyle = "rgba(15, 23, 42, 0.45)"; // Highly visible dark charcoal
+        ctx.lineWidth = Math.max(0.12, 1.2 / drawZoom);
+      } else if (drawZoom >= 24) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.65)"; // Extra dark solid black borders for high zoom pixel artwork
+        ctx.lineWidth = 1.3 / drawZoom;
+      } else if (drawZoom >= 12) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.45)"; // Perfect dark boundaries
+        ctx.lineWidth = 1.1 / drawZoom;
+      } else if (drawZoom >= 6) {
+        ctx.strokeStyle = "rgba(15, 23, 42, 0.28)"; // Balanced reference guide lines
+        ctx.lineWidth = 1.0 / drawZoom;
+      } else {
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.15)";
+        ctx.lineWidth = 0.12;
+      }
+
       ctx.beginPath();
       // Draw 1px aligned lines using single batch stroke (100x faster than separate stroke loops!)
       for (let i = 0; i <= canvas.width; i += 1) {
@@ -415,62 +550,35 @@ export default function CanvasBoard({
     }
 
     // 6. Draw all committed pixels on top
-    Object.keys(pixels).forEach((key) => {
-      const p = pixels[key];
-      if (p.x >= 0 && p.x < canvasWidth && p.y >= 0 && p.y < canvasHeight) {
-        // If color is transparent/deleted, we let the continent show or paint ocean
-        if (p.color === "transparent") {
-          return; // Skip drawing transparent ones to allow erasure
+    if (drawZoom >= 3.0) {
+      Object.keys(pixels).forEach((key) => {
+        const p = pixels[key];
+        if (p.x >= 0 && p.x < canvasWidth && p.y >= 0 && p.y < canvasHeight) {
+          // If color is transparent/deleted, we let the continent show or paint ocean
+          if (p.color === "transparent") {
+            return; // Skip drawing transparent ones to allow erasure
+          }
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x, p.y, 1, 1);
         }
-        ctx.fillStyle = p.color;
-        ctx.fillRect(p.x, p.y, 1, 1);
-      }
-    });
+      });
 
-    // 7. Draw staged pixels currently in staging basket
-    Object.keys(stagedPixels).forEach((key) => {
-      const [sx, sy] = key.split(",").map(Number);
-      const col = stagedPixels[key];
-      
-      if (col === "transparent") {
-        // Erase preview
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(sx, sy, 1, 1);
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.85)";
-        ctx.lineWidth = 0.15;
-        ctx.strokeRect(sx + 0.08, sy + 0.08, 0.84, 0.84); // Mathematically shrunk inner rect to avoid bleeding on adjacent cells
-      } else {
-        ctx.fillStyle = col;
-        ctx.fillRect(sx, sy, 1, 1);
-        // Highlight active edits nicely with high contrast dark inner stroke that stays within the cell bounds!
-        ctx.strokeStyle = "rgba(15, 23, 42, 0.9)";
-        ctx.lineWidth = 0.15;
-        ctx.strokeRect(sx + 0.08, sy + 0.08, 0.84, 0.84); // Mathematically shrunk inner rect to avoid bleeding on adjacent cells
-      }
-    });
-
-    // 8. Draw selected pixel highlight target cursor with higher contrast pulsing outer bracket
-    if (selectedPixel) {
-      const sx = selectedPixel.x;
-      const sy = selectedPixel.y;
-      
-      // Face indicator on the selected cell - shaded translucent interior fill
-      ctx.fillStyle = "rgba(147, 51, 234, 0.28)";
-      ctx.fillRect(sx, sy, 1, 1);
-
-      // Inward-bound stroke lines to guarantee zero bleed on adjacent pixels
-      ctx.strokeStyle = "rgba(147, 51, 234, 0.95)";
-      ctx.lineWidth = 0.2;
-      ctx.strokeRect(sx + 0.1, sy + 0.1, 0.8, 0.8);
-      
-      // Exquisite outer bracket ring of radius 3.5 so it is perfectly visible zoomed out
-      ctx.strokeStyle = "rgba(139, 92, 246, 0.75)";
-      ctx.lineWidth = 0.35;
-      ctx.beginPath();
-      ctx.arc(sx + 0.5, sy + 0.5, 3.5, 0, 2 * Math.PI);
-      ctx.stroke();
+      // 7. Draw staged pixels currently in staging basket as neat solid rectangles (no subpixel stroke)
+      Object.keys(stagedPixels).forEach((key) => {
+        const [sx, sy] = key.split(",").map(Number);
+        const col = stagedPixels[key];
+        if (col === "transparent") {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(sx, sy, 1, 1);
+        } else {
+          ctx.fillStyle = col;
+          ctx.fillRect(sx, sy, 1, 1);
+        }
+      });
     }
-  }, [pixels, stagedPixels, selectedPixel, selectedColor, zoom, showGridLines, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
+
+    // 8. Selected pixel target cursor highlight is rendered as a clean, high-contrast, non-bleeding HTML overlay on top!
+  }, [pixels, stagedPixels, selectedPixel, selectedColor, drawZoom, showGridLines, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
 
   // Viewport zoom operations
   const handleZoomOffset = (direction: "in" | "out") => {
@@ -484,19 +592,23 @@ export default function CanvasBoard({
     const pixelY = (centerY - panY) / zoom;
 
     let newZoom = zoom;
-    if (direction === "in" && zoom < 32) newZoom = Number((zoom * 1.5).toFixed(2));
-    if (direction === "out" && zoom > 0.4) newZoom = Number((zoom / 1.5).toFixed(2));
+    if (direction === "in") {
+      if (zoom < 120) {
+        newZoom = Number((zoom * 1.5).toFixed(2));
+        if (newZoom > 120) newZoom = 120;
+      }
+    } else {
+      if (zoom > 0.4) {
+        newZoom = Number((zoom / 1.5).toFixed(2));
+        if (newZoom < 0.4) newZoom = 0.4;
+      }
+    }
 
     setZoom(newZoom);
     setPanX(centerX - pixelX * newZoom);
     setPanY(centerY - pixelY * newZoom);
   };
 
-  const handleWheelAction = (e: WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const direction = e.deltaY < 0 ? "in" : "out";
-    handleZoomOffset(direction);
-  };
 
   // Warp teleporter
   const warpToLocation = (x: number, y: number) => {
@@ -576,6 +688,10 @@ export default function CanvasBoard({
         setPanY(e.clientY - dragStart.current.y);
       }
     } else {
+      if (zoom < 3.0) {
+        setHoveredPixel(null);
+        return;
+      }
       const localX = e.clientX - rect.left - panX;
       const localY = e.clientY - rect.top - panY;
 
@@ -598,6 +714,11 @@ export default function CanvasBoard({
 
       // Treat as clean click only if cursor moved less than 5px
       if (distance < 5 && !dragThresholdPassed.current) {
+        if (zoom < 3.0) {
+          // No pixel selection or drawing allowed while zoomed out!
+          mouseDownCoords.current = null;
+          return;
+        }
         const rect = containerRef.current?.getBoundingClientRect();
         if (rect) {
           const localX = e.clientX - rect.left - panX;
@@ -613,26 +734,29 @@ export default function CanvasBoard({
               // Direct painting Mode: Place instantly to the backend database!
               paintSinglePixelDirect(px, py, selectedColor);
             } else {
-              const key = `${px},${py}`;
-              const isAlreadyStaged = stagedPixels[key] !== undefined;
-              
-              if (isAlreadyStaged) {
-                // Clicking custom-staged pixel a second time toggles its selected state off
-                setStagedPixels((prev) => {
-                  const updated = { ...prev };
-                  delete updated[key];
-                  return updated;
-                });
-                setSelectedPixel(null);
-                triggerBeep(220, "sine", 0.04); // elegant clear tone
+              if (isEditingMode) {
+                const key = `${px},${py}`;
+                const isAlreadyStaged = stagedPixels[key] !== undefined;
+                if (isAlreadyStaged) {
+                  setStagedPixels((prev) => {
+                    const updated = { ...prev };
+                    delete updated[key];
+                    return updated;
+                  });
+                  setSelectedPixel(null);
+                  triggerBeep(220, "sine", 0.04);
+                } else {
+                  setSelectedPixel({ x: px, y: py });
+                  triggerBeep(329.63, "sine", 0.04);
+                  setStagedPixels((prev) => ({
+                    ...prev,
+                    [key]: selectedColor,
+                  }));
+                }
               } else {
-                // Mark/stage new pixel selection
+                // Not in editing mode: simple inspector selection (Image 1)
                 setSelectedPixel({ x: px, y: py });
-                triggerBeep(329.63, "sine", 0.04); // subtle clean selection beep
-                setStagedPixels((prev) => ({
-                  ...prev,
-                  [key]: selectedColor,
-                }));
+                triggerBeep(329.63, "sine", 0.04);
               }
             }
           }
@@ -658,7 +782,7 @@ export default function CanvasBoard({
 
   // Staging metrics
   const stagedCount = Object.keys(stagedPixels).length;
-  const costPerPixel = chosenCurrency === "MOONYETIS" ? 50 : 0.01;
+  const costPerPixel = 1; // 1 Pixel Token (PX) per pixel
   const totalStagedCost = stagedCount * costPerPixel;
 
   const handleSendBatch = async () => {
@@ -709,7 +833,7 @@ export default function CanvasBoard({
         onMouseDown={handleMouseDownAction}
         onMouseMove={handleMouseMoveAction}
         onMouseUp={handleMouseUpAction}
-        onWheel={handleWheelAction}
+        onMouseLeave={() => setHoveredPixel(null)}
         className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing select-none"
       >
         <canvas
@@ -722,353 +846,637 @@ export default function CanvasBoard({
             imageRendering: "pixelated",
           }}
         />
+
+        {/* Dynamic High-Contrast Sharp Target Overlays (Screen-Space Crisp Rendering) */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {/* Subtle cursor-hovered pixel shading reference */}
+          {hoveredPixel && zoom >= 2 && (!selectedPixel || selectedPixel.x !== hoveredPixel.x || selectedPixel.y !== hoveredPixel.y) && (
+            <div
+              className="absolute pointer-events-none border border-slate-950/40"
+              style={{
+                left: `${hoveredPixel.x * zoom + panX}px`,
+                top: `${hoveredPixel.y * zoom + panY}px`,
+                width: `${zoom}px`,
+                height: `${zoom}px`,
+                boxSizing: "border-box",
+                backgroundColor: selectedColor === "transparent" ? "rgba(0, 0, 0, 0.15)" : selectedColor,
+                opacity: 0.35,
+                boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.4)",
+              }}
+            />
+          )}
+
+          {/* Active selection pixel cursor */}
+          {selectedPixel && (
+            <>
+              <div
+                className="absolute pointer-events-none border-2 border-purple-600 bg-purple-500/10"
+                style={{
+                  left: `${selectedPixel.x * zoom + panX}px`,
+                  top: `${selectedPixel.y * zoom + panY}px`,
+                  width: `${zoom}px`,
+                  height: `${zoom}px`,
+                  boxSizing: "border-box",
+                  boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.85)",
+                }}
+              />
+              {/* Glowing blue map-pin pointing exactly to the pixel */}
+              <div
+                className="absolute pointer-events-none transition-all duration-150 ease-out z-30"
+                style={{
+                  left: `${selectedPixel.x * zoom + panX}px`,
+                  top: `${selectedPixel.y * zoom + panY}px`,
+                  transform: `translate(${zoom / 2 - 16}px, -36px)`,
+                }}
+              >
+                <div className="flex flex-col items-center animate-bounce origin-bottom">
+                  <svg className="w-8 h-8 drop-shadow-md text-blue-600 fill-blue-600" viewBox="0 0 24 24">
+                    <path 
+                      d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" 
+                      stroke="white" 
+                      strokeWidth="1.5" 
+                    />
+                  </svg>
+                  <div className="-mt-1 w-1 h-1 bg-blue-600 rounded-full border border-white shadow animate-ping" />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Staged pixels highlighted boundaries */}
+          {Object.keys(stagedPixels).map((key) => {
+            const [sx, sy] = key.split(",").map(Number);
+            return (
+              <div
+                key={key}
+                className="absolute pointer-events-none border border-slate-900/60 bg-transparent"
+                style={{
+                  left: `${sx * zoom + panX}px`,
+                  top: `${sy * zoom + panY}px`,
+                  width: `${zoom}px`,
+                  height: `${zoom}px`,
+                  boxSizing: "border-box",
+                  boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.5)",
+                }}
+              />
+            );
+          })}
+
+          {/* Activity Hotspots / Flame Markers (only visible when zoomed out, i.e., zoom < 3.0) */}
+          {zoom < 3.0 && (
+            <>
+              {HOTSPOTS.map((spot) => {
+                const screenX = spot.x * zoom + panX;
+                const screenY = spot.y * zoom + panY;
+
+                return (
+                  <button
+                    key={spot.id}
+                    onClick={() => {
+                      warpToLocation(spot.x, spot.y);
+                      // Since warpToLocation sets zoom based on Math.max(8, zoom), we force zoom to 8.0
+                      setZoom(8);
+                      triggerBeep(784, "sine", 0.08);
+                    }}
+                    className="absolute z-20 pointer-events-auto -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-300 hover:scale-115 active:scale-95 group focus:outline-none cursor-pointer"
+                    style={{
+                      left: `${screenX}px`,
+                      top: `${screenY}px`,
+                    }}
+                    title={`Hotspot: ${spot.label} (${spot.count} paints)`}
+                  >
+                    {/* Pulsing Aura */}
+                    <span className="absolute inline-flex rounded-full bg-orange-500/25 w-11 h-11 animate-ping" />
+                    
+                    {/* Badge Container */}
+                    <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-red-600 border border-white text-white font-extrabold flex items-center justify-center gap-1 shadow-lg shadow-orange-500/20 rounded-full py-1 px-2.5">
+                      <Flame className="w-3.5 h-3.5 text-white fill-white animate-pulse" />
+                      {spot.isMajor && (
+                        <span className="text-[10px] font-mono font-black select-none tracking-tighter leading-none mt-0.5">
+                          {spot.count}
+                        </span>
+                      )}
+
+                      {/* Tooltip */}
+                      <div className="absolute top-10 bg-slate-950/90 backdrop-blur-md border border-slate-700/55 text-[8.5px] font-bold uppercase tracking-wider text-white px-1.5 py-0.5 rounded shadow opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+                        {spot.label}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* HUD: Center Coordinates Overlay (Float top center) */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-auto">
-        <div className="bg-white/90 backdrop-blur-lg border border-slate-200/80 rounded-full py-1.5 px-4 flex items-center justify-center gap-3.5 shadow-xl">
-          <div className="flex items-center gap-1 shrink-0">
-            <Crosshair className="w-3.5 h-3.5 text-purple-600 animate-pulse" />
-            <span className="text-[10px] font-mono tracking-wider font-semibold text-slate-500 uppercase">COORDINATE INDEX</span>
-          </div>
-          
-          <div className="font-mono text-xs font-bold text-slate-800 flex items-center gap-1.5 min-w-[120px] justify-center">
-            <span className="text-purple-600">X:</span>
-            <span className="text-slate-800 bg-slate-50 border border-slate-200 py-0.5 px-1.5 rounded">{hoveredPixel ? hoveredPixel.x : (selectedPixel ? selectedPixel.x : "-")}</span>
-            <span className="text-slate-300 font-normal">|</span>
-            <span className="text-purple-600">Y:</span>
-            <span className="text-slate-800 bg-slate-50 border border-slate-200 py-0.5 px-1.5 rounded">{hoveredPixel ? hoveredPixel.y : (selectedPixel ? selectedPixel.y : "-")}</span>
-          </div>
+      {/* HUD: Tiny Center Coordinates Overlay (Float top center) */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none">
+        <div className="bg-slate-900/90 text-white backdrop-blur-lg border border-slate-700/50 rounded-full py-1 px-3 flex items-center justify-center gap-1.5 shadow-md">
+          <Crosshair className="w-3 h-3 text-emerald-400" />
+          <span className="font-mono text-[10px] font-extrabold tracking-wide">
+            X: {hoveredPixel ? hoveredPixel.x : (selectedPixel ? selectedPixel.x : "-")} | Y: {hoveredPixel ? hoveredPixel.y : (selectedPixel ? selectedPixel.y : "-")}
+          </span>
+        </div>
+      </div>
 
-          <button 
+      {/* FLOAT: Stack on the left side of separate circular white buttons */}
+      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 pointer-events-auto">
+        <button
+          onClick={() => {
+            if (onToggleMenuOverlay) {
+              onToggleMenuOverlay("rules");
+            } else {
+              onTriggerStore();
+            }
+            triggerBeep(493, "sine", 0.05);
+          }}
+          className="w-10 h-10 rounded-full border shadow-md flex items-center justify-center bg-white/95 backdrop-blur-sm shadow-slate-200 text-slate-600 hover:text-slate-900 font-bold transition-all hover:scale-105 active:scale-95 cursor-pointer border-slate-200/90"
+          title="Información y Reglas"
+        >
+          <span className="font-serif text-sm font-black italic text-slate-800">i</span>
+        </button>
+        <button
+          onClick={() => {
+            handleZoomOffset("in");
+            triggerBeep(330, "sine", 0.05);
+          }}
+          className="w-10 h-10 rounded-full border shadow-md flex items-center justify-center bg-white/95 backdrop-blur-sm shadow-slate-200 text-slate-600 hover:text-slate-900 font-bold transition-all hover:scale-105 active:scale-95 cursor-pointer border-slate-200/90 font-sans text-xl"
+          title="Zoom In"
+        >
+          +
+        </button>
+        <button
+          onClick={() => {
+            handleZoomOffset("out");
+            triggerBeep(330, "sine", 0.05);
+          }}
+          className="w-10 h-10 rounded-full border shadow-md flex items-center justify-center bg-white/95 backdrop-blur-sm shadow-slate-200 text-slate-600 hover:text-slate-900 font-bold transition-all hover:scale-105 active:scale-95 cursor-pointer border-slate-200/90 font-sans text-xl"
+          title="Zoom Out"
+        >
+          -
+        </button>
+      </div>
+
+      {/* FLOAT: Stack on the right side of separate circular white buttons */}
+      <div className="absolute top-4 right-4 z-20 flex flex-col items-center gap-2 pointer-events-auto">
+        {/* Active Player Profile bubble (Clicking opens settings settings modal) */}
+        <button
+          onClick={() => {
+            onTriggerProfile();
+            triggerBeep(523, "sine", 0.05);
+          }}
+          className="w-11 h-11 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-500 flex items-center justify-center relative shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-400 ring-offset-2 hover:ring-indigo-400"
+          title="Editar Perfil y Faucets"
+        >
+          <span className="text-xl" role="img" aria-label="your flag">
+            {userProfile?.flag_emoji || "🇺🇸"}
+          </span>
+          <span className="absolute -bottom-1 -left-1 bg-indigo-600 border border-slate-150 text-white rounded-full text-[8.5px] font-black h-5 w-5 flex items-center justify-center shadow-md font-mono shrink-0">
+            {charges}
+          </span>
+        </button>
+
+        {/* Vertical feature buttons stack */}
+        <div className="flex flex-col gap-2 mt-1">
+          {/* 1. Store button */}
+          <button
             onClick={() => {
-              setShowGridLines(!showGridLines);
+              onTriggerStore();
+              triggerBeep(659, "sine", 0.05);
+            }}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              activeMenuOverlay === "store" 
+                ? "bg-purple-600 border-purple-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Tienda de Upgrades"
+          >
+            <ShoppingCart className="w-5 h-5" />
+          </button>
+
+          {/* 2. Leaderboard button */}
+          <button
+            onClick={() => {
+              if (onToggleMenuOverlay) onToggleMenuOverlay("leaderboard");
+              triggerBeep(587, "sine", 0.05);
+            }}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              activeMenuOverlay === "leaderboard" 
+                ? "bg-purple-600 border-purple-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Ránking y Líderes"
+          >
+            <Trophy className="w-5 h-5" />
+          </button>
+
+          {/* 3. Chat button */}
+          <button
+            onClick={() => {
+              if (onToggleMenuOverlay) onToggleMenuOverlay("chat");
+              triggerBeep(440, "sine", 0.05);
+            }}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center relative transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              activeMenuOverlay === "chat" 
+                ? "bg-purple-600 border-purple-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Chat del Servidor"
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="absolute top-0.5 right-0.5 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+            </span>
+          </button>
+
+          {/* 4. Live Feed Globe */}
+          <button
+            onClick={() => {
+              if (onToggleMenuOverlay) onToggleMenuOverlay("feed");
+              triggerBeep(523, "sine", 0.05);
+            }}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              activeMenuOverlay === "feed" 
+                ? "bg-purple-600 border-purple-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Feed de Actividad"
+          >
+            <Globe className="w-5 h-5" />
+          </button>
+
+          {/* 5. Teleporter Portal overlay toggler */}
+          <button
+            onClick={() => {
+              setShowTeleporter(!showTeleporter);
               triggerBeep(330, "sine", 0.05);
             }}
-            className={`text-[8px] font-bold font-mono px-2 py-0.5 rounded transition-all cursor-pointer ${showGridLines ? "bg-purple-650/15 text-purple-600 border border-purple-500/30 font-extrabold" : "bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200"}`}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              showTeleporter 
+                ? "bg-indigo-600 border-indigo-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Portal Warp Teleporter"
           >
-            GRID
-          </button>
-        </div>
-
-        {/* Loading GIS Map Tiles badge */}
-        {loadingMaps && (
-          <div className="bg-purple-950/90 border border-purple-500/40 rounded-full px-3 py-1 flex items-center gap-1.5 animate-pulse shadow-md">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping"></span>
-            <span className="text-[8px] font-mono font-bold text-purple-300 uppercase tracking-widest">
-              STREAMING GLOBAL GIS CORE MAP...
-            </span>
-          </div>
-        )}
-
-        {/* Projection Mode selected as Voyager Geo */}
-      </div>
-
-      {/* FLOAT: Controls HUD (Pill float right side) */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col items-center gap-2">
-        <div className="flex flex-col bg-white/90 backdrop-blur-md border border-slate-200 rounded-lg p-1.5 shadow-xl">
-          <button
-            onClick={() => handleZoomOffset("in")}
-            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
-            title="Zoom In"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          
-          <div className="text-[10px] font-mono text-purple-600 text-center font-bold my-1 border-y border-slate-200 py-1">
-            {zoom}x
-          </div>
-
-          <button
-            onClick={() => handleZoomOffset("out")}
-            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-all cursor-pointer"
-            title="Zoom Out"
-          >
-            <ZoomOut className="w-4 h-4" />
+            <MapPin className="w-5 h-5" />
           </button>
 
-          <div className="h-px bg-slate-200 my-1"></div>
-
+          {/* 6. Dev RPC Terminal */}
           <button
-            onClick={() => warpToLocation(490, 230)}
-            className="p-2 rounded hover:bg-slate-100 text-purple-600 hover:text-purple-700 transition-all cursor-pointer"
-            title="Center Europe"
+            onClick={() => {
+              if (onToggleMenuOverlay) onToggleMenuOverlay("developer_rpc");
+              triggerBeep(493, "sine", 0.05);
+            }}
+            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+              activeMenuOverlay === "developer_rpc" 
+                ? "bg-indigo-600 border-indigo-500 text-white" 
+                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+            }`}
+            title="Dev RPC Terminal Command Console"
           >
-            <Maximize2 className="w-4 h-4" />
+            <TerminalIcon className="w-5 h-5" />
           </button>
         </div>
       </div>
 
-      {/* FLOAT: Teleporter input (Bottom left) */}
-      <div className="absolute bottom-4 left-4 z-20 pointer-events-auto max-w-[280px]">
-        <div className="bg-white/90 backdrop-blur-md border border-slate-200 rounded-xl p-3 shadow-xl">
-          <div className="flex items-center gap-2 text-slate-700 font-semibold text-xs mb-2">
-            <Move className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Map Teleporter</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="flex items-center bg-slate-50 border border-slate-200 rounded px-2.5 py-1 max-w-[80px]">
-              <span className="text-[9px] font-mono text-slate-400 mr-1 font-bold">X</span>
-              <input
-                type="number"
-                min="0"
-                max="999"
-                value={teleportX}
-                onChange={(e) => setTeleportX(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
-                className="w-full bg-transparent text-slate-800 focus:outline-none font-mono text-xs font-semibold"
-              />
+      {/* FLOAT: Compact Teleporter input (Bottom left, floating above the Grid toggler!) */}
+      {showTeleporter && (
+        <div className="absolute bottom-16 left-4 z-20 pointer-events-auto max-w-[190px] animate-fade-in">
+          <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl p-2 px-2.5 shadow-xl flex flex-col gap-1 text-[10px]">
+            <div className="flex items-center gap-1.5 text-slate-700 font-black mb-0.5">
+              <Move className="w-3 h-3 text-indigo-500" />
+              <span>Teleporter Portal</span>
             </div>
-            <div className="flex items-center bg-slate-50 border border-slate-200 rounded px-2.5 py-1 max-w-[80px]">
-              <span className="text-[9px] font-mono text-slate-400 mr-1 font-bold">Y</span>
-              <input
-                type="number"
-                min="0"
-                max="999"
-                value={teleportY}
-                onChange={(e) => setTeleportY(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
-                className="w-full bg-transparent text-slate-800 focus:outline-none font-mono text-xs font-semibold"
-              />
+            <div className="flex items-center gap-1">
+              <div className="flex items-center bg-slate-50 border border-slate-150 rounded px-1.5 py-0.5 max-w-[45px]">
+                <span className="text-[8px] font-mono text-slate-400 mr-0.5">X</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="999"
+                  value={teleportX}
+                  onChange={(e) => setTeleportX(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
+                  className="w-full bg-transparent text-slate-800 focus:outline-none font-mono text-[9px] font-semibold"
+                />
+              </div>
+              <div className="flex items-center bg-slate-50 border border-slate-150 rounded px-1.5 py-0.5 max-w-[45px]">
+                <span className="text-[8px] font-mono text-slate-400 mr-0.5">Y</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="999"
+                  value={teleportY}
+                  onChange={(e) => setTeleportY(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
+                  className="w-full bg-transparent text-slate-800 focus:outline-none font-mono text-[9px] font-semibold"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  warpToLocation(teleportX, teleportY);
+                  triggerBeep(587, "sine", 0.05);
+                }}
+                className="py-1 px-2.5 bg-indigo-600 hover:bg-indigo-500 rounded text-[9px] font-bold text-white transition-all cursor-pointer shadow-md shadow-indigo-600/10"
+              >
+                Warp
+              </button>
             </div>
-            <button
-              onClick={() => warpToLocation(teleportX, teleportY)}
-              className="flex-1 py-1.5 px-3 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-semibold text-white transition-all cursor-pointer shadow-lg shadow-indigo-600/10"
-            >
-              Warp
-            </button>
           </div>
         </div>
+      )}
+
+      {/* Floating Re-center Compass (Bottom Right Corner) */}
+      <div className="absolute bottom-4 right-4 z-20 pointer-events-auto">
+        <button
+          onClick={() => warpToLocation(490, 230)}
+          className="w-10 h-10 rounded-full bg-white border border-slate-200/90 shadow-xl flex items-center justify-center text-red-500 hover:text-red-650 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+          title="Re-centrar Mapa"
+        >
+          <Crosshair className="w-5 h-5 animate-pulse" />
+        </button>
+      </div>
+
+      {/* Floating Grid Toggle Button (Bottom Left Corner) */}
+      <div className="absolute bottom-4 left-4 z-20 pointer-events-auto">
+        <button
+          onClick={() => {
+            setShowGridLines(!showGridLines);
+            triggerBeep(330, "sine", 0.05);
+          }}
+          className={`w-10 h-10 rounded-full border shadow-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
+            showGridLines 
+              ? "bg-blue-50 border-blue-300 text-blue-600 font-extrabold" 
+              : "bg-white border-slate-200 text-slate-550 hover:text-slate-800"
+          }`}
+          title="Alternar cuadrícula"
+        >
+          <Layers className="w-5 h-5" />
+        </button>
       </div>
 
       {/* FLOATING ACTION BOTTOM CONTAINER (Palette Docks, Staging Drawers, Charges systems) */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4 flex flex-col items-center gap-3">
         
-        {/* CHECKOUT CART DRAWER: Displays when pixels are staged in the palette basket */}
-        {stagedCount > 0 && showStagingPanel && (
-          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl p-4 shadow-xl space-y-3 animate-fade-in text-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <h4 className="font-sans font-bold text-xs text-slate-900">Painting Basket ({stagedCount} px)</h4>
-              </div>
-              <button
-                onClick={clearStagedBasket}
-                className="text-slate-450 hover:text-red-550 font-mono text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
-                title="Discard basket changes"
-              >
-                <Trash2 className="w-3 h-3" />
-                Clear Space
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {/* Payment Token Selector */}
-              <div className="space-y-1">
-                <span className="text-[8px] font-mono text-slate-450 uppercase tracking-widest block">Fuel Token</span>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    onClick={() => setChosenCurrency("FB")}
-                    className={`py-1 px-1.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-center ${
-                      chosenCurrency === "FB"
-                        ? "border-yellow-550 bg-yellow-50"
-                        : "border-slate-200 hover:border-slate-300 bg-slate-50"
-                    }`}
-                  >
-                    <span className="text-[8px] font-mono text-slate-500 leading-none">Coins</span>
-                    <span className="text-[10px] font-bold text-yellow-650 mt-0.5">0.01 W</span>
-                  </button>
-
-                  <button
-                    onClick={() => setChosenCurrency("MOONYETIS")}
-                    className={`py-1 px-1.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-center ${
-                      chosenCurrency === "MOONYETIS"
-                        ? "border-purple-550 bg-purple-50"
-                        : "border-slate-200 hover:border-slate-300 bg-slate-50"
-                    }`}
-                  >
-                    <span className="text-[8px] font-mono text-slate-500 leading-none">Yeti</span>
-                    <span className="text-[10px] font-bold text-purple-600 mt-0.5">50 MY</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Cost Box */}
-              <div className="bg-slate-50 p-2 rounded-lg border border-slate-150 flex flex-col justify-between">
-                <div className="flex justify-between items-center text-[9px] text-slate-500">
-                  <span>Placing energy:</span>
-                  <span className={`font-mono font-bold ${charges < stagedCount ? "text-red-500" : "text-purple-650"}`}>
-                    -{stagedCount} Charge {charges < stagedCount ? "⚠️" : ""}
-                  </span>
-                </div>
-                <div className="border-t border-slate-200/60 pt-1.5 flex justify-between items-center text-[10px] font-mono text-slate-800">
-                  <span>TOTAL ESTIMATED:</span>
-                  <span className="text-emerald-600 font-bold">
-                    {totalStagedCost.toFixed(chosenCurrency === "FB" ? 3 : 0)} {chosenCurrency === "FB" ? "Coins" : "MY"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Main Action Trigger */}
-            <button
-              onClick={handleSendBatch}
-              disabled={isSubmitting}
-              className={`w-full py-2.5 px-4 rounded-xl font-semibold text-xs tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer ${
-                charges < stagedCount
-                  ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                  : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/10 active:scale-98"
-              }`}
-            >
-              {isSubmitting ? (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 animate-spin text-purple-200" />
-                  Painting world map...
-                </>
-              ) : charges < stagedCount ? (
-                `Depleted: Require Refill (+${stagedCount - charges} Energy)`
-              ) : !currentAddress ? (
-                "Verify profile & Connect Faucet"
-              ) : (
-                <>
-                  <Check className="w-4 h-4 text-white animate-pulse" />
-                  Paint these {stagedCount} Pixels
-                </>
-              )}
-            </button>
-          </div>
-        )}
-
-        {/* Selected Pixel Inspector details */}
-        {selectedPixel && (
-          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-250 rounded-xl p-2 px-3.5 shadow-md flex items-center justify-between text-[11px] font-mono text-slate-800 gap-3 border-l-4 border-l-purple-500 animate-fade-in shadow-lg">
-            <div className="flex items-center gap-2 max-w-[55%] text-slate-700">
-              <span 
-                className="w-3.5 h-3.5 rounded-sm border border-slate-350 shrink-0 shadow-sm" 
-                style={{ backgroundColor: selectedPixelDetails?.color || "#e2e8f0" }} 
-              />
-              <div className="truncate">
-                <span>Selected: </span>
-                <strong className="text-indigo-600 font-bold">[{selectedPixel.x}, {selectedPixel.y}]</strong>
-                {selectedPixelDetails ? (
-                  <span> • Owner: <span className="text-purple-600 font-bold">{selectedPixelDetails.owner.substring(0, 8)}...</span></span>
-                ) : (
-                  <span className="text-emerald-600 font-bold"> • Vacant Space</span>
-                )}
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => paintSinglePixelDirect(selectedPixel.x, selectedPixel.y, selectedColor)}
-                disabled={isSubmitting}
-                className="py-1 px-3 bg-purple-600 hover:bg-purple-550 rounded font-sans font-bold text-2xs text-white cursor-pointer transition-all active:scale-95 flex items-center gap-1.5 shadow"
-              >
-                {selectedColor === "transparent" ? (
-                  <>
-                    <Eraser className="w-3 h-3 text-red-200" />
-                    Erase Now
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full border border-white/40 shrink-0" style={{ backgroundColor: selectedColor }} />
-                    Paint Now
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => setSelectedPixel(null)}
-                className="text-[10px] text-slate-500 hover:text-slate-800 cursor-pointer bg-slate-50 hover:bg-slate-100 p-1 px-1.5 rounded border border-slate-200 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Ultra-Slim Curved Glass Color Dock (Space Saving & High Usability) */}
-        <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full py-1.5 px-3 shadow-xl text-slate-800">
-          
-          {/* Main Controls Row */}
-          <div className="flex items-center justify-between gap-1.5">
-            <div className="flex-1 flex justify-start items-center gap-1.5 overflow-x-auto scrollbar-none max-w-[88%] pr-2">
-              
-              {/* High-Contrast Space Saver Energy Badge */}
-              <div 
-                className="flex items-center gap-1 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-full py-1 px-2.5 font-mono text-[9px] font-bold shrink-0 shadow-sm"
-                title={`Energy Capacity: ${charges}/${maxCharges} px. Recharges automatically every 10s.`}
-              >
-                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                <span>{charges}/{maxCharges}</span>
-              </div>
-
-              <div className="w-px h-4 bg-slate-200 shrink-0"></div>
-
-              {PALETTE.map((color) => (
-                <button
-                  key={color}
-                  onClick={() => {
-                    setSelectedColor(color);
-                    if (selectedPixel) {
-                      const key = `${selectedPixel.x},${selectedPixel.y}`;
-                      setStagedPixels(prev => ({
-                        ...prev,
-                        [key]: color
-                      }));
-                    }
-                  }}
-                  className={`w-6 h-6 sm:w-6.5 sm:h-6.5 rounded-full shrink-0 border relative transition-all active:scale-90 cursor-pointer ${
-                    selectedColor === color 
-                      ? "border-slate-800 scale-110 shadow-md" 
-                      : "border-slate-200 hover:border-slate-400 hover:scale-105"
-                  }`}
-                  style={{ backgroundColor: color === "transparent" ? "#ff000000" : color }}
-                  title={color === "transparent" ? "Eraser Brush" : color}
-                >
-                  {color === "transparent" && (
-                    <span className="absolute inset-0 flex items-center justify-center bg-slate-50 rounded-full border border-red-200">
-                      <Eraser className="w-3.5 h-3.5 text-red-500" />
-                    </span>
-                  )}
-                  {selectedColor === color && (
-                    <span className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-1.5 h-1.5 rounded-full bg-slate-800" />
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <div className="w-px h-5 bg-slate-200 mx-1"></div>
-
-            {/* Toggle Direct Paint Mode with Zap icon */}
+        {/* CASE 1: Dormant Active Paint / Trigger Action (Image 3) */}
+        {!selectedPixel && !isEditingMode && (
+          <div className="flex items-center justify-center gap-1.5 w-full pointer-events-auto">
             <button
               onClick={() => {
-                setDirectPaintMode(!directPaintMode);
-                triggerBeep(directPaintMode ? 440 : 880, "sine", 0.05);
+                const defaultX = 490;
+                const defaultY = 230;
+                setSelectedPixel({ x: defaultX, y: defaultY });
+                setIsEditingMode(true);
+                setStagedPixels({ [`${defaultX},${defaultY}`]: selectedColor });
+                warpToLocation(defaultX, defaultY);
+                triggerBeep(523.25, "sine", 0.06);
               }}
-              className={`p-1.5 rounded-full border transition-all cursor-pointer ${
-                directPaintMode 
-                  ? "bg-amber-100 text-amber-600 border-amber-300 shadow-sm scale-110" 
-                  : "bg-slate-50 text-slate-400 border-slate-200 hover:text-slate-800"
-              }`}
-              title={directPaintMode ? "Direct Paint Mode: Active (Clicking the map paints instantly!)" : "Direct Paint Mode: Inactive (Clicking selects a pixel)"}
+              className="px-8 py-3 bg-[#0066ff] hover:bg-[#0055ee] text-white font-extrabold text-sm tracking-wide rounded-full shadow-lg shadow-blue-600/20 transition-all duration-150 hover:scale-[1.05] active:scale-[0.95] cursor-pointer flex items-center justify-center gap-2 max-w-[280px] w-full"
             >
-              <Zap className="w-4 h-4" />
-            </button>
-
-            <div className="w-px h-5 bg-slate-200 mx-1"></div>
-
-            {/* Toggle staged list */}
-            <button
-              onClick={() => setShowStagingPanel(!showStagingPanel)}
-              className={`p-1.5 rounded-full transition-all cursor-pointer ${stagedCount > 0 ? "bg-purple-550/15 text-purple-600 animate-pulse" : "text-slate-400 hover:text-slate-800"}`}
-              title="Toggle Basket checkout drawer"
-            >
-              <Layers className="w-4 h-4" />
+              <Paintbrush className="w-4 h-4 text-white" />
+              Pintar {charges}/{maxCharges} {charges < maxCharges && `(0:${secondsLeft < 10 ? "0" : ""}${secondsLeft})`}
             </button>
           </div>
+        )}
 
-        </div>
+        {/* CASE 2: Selected Pixel Inspector Details Card (Image 1) */}
+        {selectedPixel && !isEditingMode && (
+          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-3xl p-5 shadow-2xl flex flex-col gap-4 animate-fade-in text-slate-800 pointer-events-auto max-w-[430px]">
+            {/* Top Row: Avatar, Info, Badges, Options, Close */}
+            <div className="flex items-start justify-between gap-3">
+              {/* Left & Middle section */}
+              <div className="flex items-center gap-3">
+                {/* Large Round Alliance/Mesh Avatar (Image 1 style) */}
+                <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-fuchsia-100 to-pink-100 border border-pink-200/60 shadow-inner flex items-center justify-center text-pink-500 font-extrabold text-xl shrink-0">
+                  {selectedPixelDetails ? (
+                    <span style={{ color: selectedPixelDetails.color }}>✝</span>
+                  ) : (
+                    "⁕"
+                  )}
+                </div>
+
+                {/* Info & Badges block */}
+                <div className="flex flex-col gap-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="font-sans font-extrabold text-base text-slate-900 tracking-tight truncate leading-tight">
+                      {selectedPixelDetails ? `Meow #${Math.floor(selectedPixel.x * 123 + selectedPixel.y * 456) % 10000000}` : "Meow #12589239"}
+                    </h3>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium tracking-wide">
+                    {selectedPixelDetails ? `Alianza: ${selectedPixelDetails.owner.substring(0, 10)}...` : "Sin alianza"}
+                  </span>
+                  
+                  {/* Badges */}
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-100 rounded-full px-2.5 py-0.5 font-mono text-[10px] font-bold">
+                      <MapPin className="w-3 h-3 text-blue-500 fill-blue-500/10" />
+                      {selectedPixel.x}, {selectedPixel.y}
+                    </span>
+                    <span className="flex items-center gap-1 bg-slate-50 text-slate-650 border border-slate-150 rounded-full px-2.5 py-0.5 font-sans text-[10px] font-bold">
+                      🇯🇵 Tokyo #1
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Options Button & Close Button */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
+                  <Star className="w-4 h-4 text-slate-400 fill-transparent hover:text-amber-500 hover:fill-amber-400" />
+                </button>
+                <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
+                  <Share2 className="w-4 h-4" />
+                </button>
+                <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setSelectedPixel(null)} 
+                  className="p-1.5 rounded-full hover:bg-slate-100 border border-slate-150 text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Actions: Solid "Pintar" button */}
+            <button
+              onClick={() => {
+                setIsEditingMode(true);
+                const key = `${selectedPixel.x},${selectedPixel.y}`;
+                if (stagedPixels[key] === undefined) {
+                  setStagedPixels({
+                    ...stagedPixels,
+                    [key]: selectedColor
+                  });
+                }
+                triggerBeep(523.25, "sine", 0.06);
+              }}
+              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 rounded-full font-bold text-sm text-white tracking-wide transition-all duration-150 shadow-md shadow-blue-600/10 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <Paintbrush className="w-4 h-4" />
+              Pintar
+            </button>
+          </div>
+        )}
+
+        {/* CASE 3: Active Paint Palette Drawer (Image 2) */}
+        {isEditingMode && (
+          <div className="w-full bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl p-4 shadow-2xl flex flex-col gap-3.5 animate-fade-in text-slate-800 pointer-events-auto max-w-[430px]">
+            {/* Header row */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-sans font-black text-slate-900">
+                  Pintar píxel {stagedCount > 0 ? `(${stagedCount})` : "(1)"}
+                </span>
+
+                <div className="flex items-center gap-1 mt-0.5 ml-2 border-l border-slate-200 pl-2">
+                  <button className="p-1 rounded hover:bg-slate-50 text-slate-600 cursor-pointer transition-colors" title="Lápiz / Brush">
+                    <Paintbrush className="w-3.5 h-3.5 text-blue-600" />
+                  </button>
+                  <button className="p-1 rounded hover:bg-slate-50 text-slate-400 hover:text-slate-600 cursor-pointer transition-colors" title="Map Overlays">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const keys = Object.keys(stagedPixels);
+                      if (keys.length > 0) {
+                        const lastKey = keys[keys.length - 1];
+                        setStagedPixels((prev) => {
+                          const updated = { ...prev };
+                          delete updated[lastKey];
+                          return updated;
+                        });
+                        triggerBeep(330, "sine", 0.05);
+                      }
+                    }}
+                    disabled={stagedCount === 0}
+                    className="p-1 rounded hover:bg-slate-50 text-slate-400 hover:text-slate-600 disabled:opacity-40 cursor-pointer transition-colors" 
+                    title="Undo"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    disabled={true}
+                    className="p-1 rounded hover:bg-slate-50 text-slate-300 disabled:opacity-40 cursor-pointer transition-colors" 
+                    title="Redo (Locked)"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => {
+                  setIsEditingMode(false);
+                }}
+                className="p-1 rounded-full text-slate-450 hover:text-slate-800 hover:bg-slate-100 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Custom Tooltip Toast pointing upwards (Image 2 style) */}
+            <div className="relative">
+              <div className="flex justify-center -mt-1.5 mb-1.5">
+                <div className="flex items-center gap-1 bg-amber-500/90 text-amber-50 border border-amber-400/30 rounded-lg py-1 px-3.5 text-[10px] font-sans font-bold shadow-md animate-bounce">
+                  <Paintbrush className="w-3 h-3 text-amber-200 fill-amber-300" />
+                  Puedes pintar más de 1 píxel
+                </div>
+              </div>
+            </div>
+
+            {/* Color grid horizontal container (Beautifully styled round color pills matching Image 2) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1.5 px-0.5 justify-start max-w-full">
+              {PALETTE.map((color) => {
+                const isSelected = selectedColor === color;
+                const isEraser = color === "transparent";
+
+                return (
+                  <button
+                    key={color}
+                    onClick={() => {
+                      setSelectedColor(color);
+                      if (selectedPixel) {
+                        const key = `${selectedPixel.x},${selectedPixel.y}`;
+                        setStagedPixels(prev => ({
+                          ...prev,
+                          [key]: color
+                        }));
+                      }
+                      triggerBeep(659.25, "sine", 0.04);
+                    }}
+                    className={`w-7 h-7 sm:w-7.5 sm:h-7.5 rounded-full shrink-0 border relative transition-all active:scale-90 cursor-pointer flex items-center justify-center ${
+                      isSelected 
+                        ? "border-slate-800 scale-110 shadow-md ring-2 ring-slate-400/40" 
+                        : "border-slate-200 hover:border-slate-400 hover:scale-105"
+                    }`}
+                    style={{ backgroundColor: isEraser ? "transparent" : color }}
+                    title={isEraser ? "Goma de borrar" : color}
+                  >
+                    {isEraser && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-slate-100 rounded-full border border-slate-250 overflow-hidden">
+                        <div className="w-full h-full bg-[linear-gradient(45deg,#ccc_25%,transparent_25%),linear-gradient(-45deg,#ccc_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#ccc_75%),linear-gradient(-45deg,transparent_75%,#ccc_75%)] bg-[size:6px_6px] bg-[position:0_0,0_3px,3px_-3px,-3px_0] opacity-60 flex items-center justify-center">
+                          <Eraser className="w-3.5 h-3.5 text-red-500 stroke-[2.5]" />
+                        </div>
+                      </span>
+                    )}
+                    {isSelected && !isEraser && (
+                      <div className="w-2 h-2 rounded-full bg-slate-900 border border-white" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Bottom button controls row */}
+            <div className="flex items-center justify-between gap-3 mt-1">
+              {/* Left selector */}
+              <button 
+                onClick={() => {
+                  setDirectPaintMode(!directPaintMode);
+                  triggerBeep(392, "sine", 0.05);
+                }}
+                className={`w-9 h-9 flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 rounded-full transition-all cursor-pointer shadow-sm text-slate-600 ${directPaintMode ? 'bg-amber-100 border-amber-300' : ''}`}
+                title="Siguiente pixel directo"
+              >
+                <ChevronsUpDown className="w-4 h-4 text-slate-600" />
+              </button>
+
+              {/* Center Pintar button (Image 2 style) */}
+              <button
+                onClick={handleSendBatch}
+                disabled={isSubmitting || (userProfile && (userProfile.pixel_tokens_balance || 0) < totalStagedCost && charges >= stagedCount)}
+                className={`flex-1 max-w-[280px] py-2.5 rounded-full font-bold text-sm text-white tracking-wide transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer bg-blue-600 hover:bg-blue-500 shadow-blue-600/10 hover:scale-[1.01] active:scale-[0.98]`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-200" />
+                    Pintando...
+                  </>
+                ) : (
+                  <>
+                    <Paintbrush className="w-4 h-4" />
+                    Pintar {stagedCount > 0 ? stagedCount : 1}/{maxCharges} {charges < maxCharges && `(0:${secondsLeft < 10 ? "0" : ""}${secondsLeft})`}
+                  </>
+                )}
+              </button>
+
+              {/* Right Draw reset */}
+              <button 
+                onClick={() => {
+                  clearStagedBasket();
+                  triggerBeep(440, "sine", 0.05);
+                }}
+                className="w-9 h-9 flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 rounded-full transition-all cursor-pointer shadow-sm text-slate-600"
+                title="Discard draw basket"
+              >
+                <Trash2 className="w-4 h-4 text-slate-600" />
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
 
     </div>
