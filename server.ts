@@ -35,6 +35,20 @@ function saveJSON<T>(filePath: string, data: T): void {
   }
 }
 
+// Generate a deterministic Taproot address for Google email login IDs
+function deriveAddressFromEmail(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) {
+    hash = (hash << 5) - hash + email.charCodeAt(i);
+    hash |= 0;
+  }
+  const positiveHash = Math.abs(hash).toString(16).padEnd(8, "c");
+  const cleanEmail = email.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let fullHash = "g" + positiveHash + "f" + cleanEmail.padEnd(50, "y");
+  fullHash = fullHash.substring(0, 58);
+  return "bc1p" + fullHash;
+}
+
 // In-Memory state loaded from / saved to disk
 let pixelsRecord: Record<string, PixelData> = loadJSON(FILE_PIXELS, {});
 let usersRecord: Record<string, UserProfile> = loadJSON(FILE_USERS, {});
@@ -304,11 +318,64 @@ async function startServer() {
     };
 
     chatList.push(newMsg);
-    if (chatList.length > 100) {
+    if (chatList.length > 105) {
       chatList.shift();
     }
     saveJSON(FILE_CHAT, chatList);
     res.json({ success: true, chat: chatList });
+  });
+
+  // API - Register or login with Google
+  app.post("/api/users/google-login", (req, res) => {
+    const { email, name, avatarUrl, currentAddress } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Google email is required." });
+    }
+
+    // Determine target wallet address:
+    // 1. If currently connected to a valid wallet address, link Google account to that address!
+    // 2. Otherwise/fallback: use deterministic address derived from client Google email.
+    let targetAddress = currentAddress;
+    if (!targetAddress || !targetAddress.startsWith("bc1p")) {
+      // Find if there is an existing user record with this google_email first!
+      const existingUser = Object.values(usersRecord).find(
+        (u) => u.google_email?.toLowerCase() === email.toLowerCase()
+      );
+      if (existingUser) {
+        targetAddress = existingUser.address;
+      } else {
+        targetAddress = deriveAddressFromEmail(email);
+      }
+    }
+
+    if (!usersRecord[targetAddress]) {
+      usersRecord[targetAddress] = {
+        username: name ? name.substring(0, 20) : `Painter-${targetAddress.substring(4, 9)}`,
+        address: targetAddress,
+        fb_balance: 5.5,
+        mooneyetis_balance: 2500,
+        pixel_tokens_balance: 150,
+        total_pixels_owned: 0,
+        flag_emoji: "🇺🇸",
+        created_at: Date.now(),
+        google_email: email,
+        google_name: name,
+        avatar_url: avatarUrl,
+      };
+      saveJSON(FILE_USERS, usersRecord);
+    } else {
+      // User already exists; complete Google details
+      usersRecord[targetAddress].google_email = email;
+      if (name && !usersRecord[targetAddress].google_name) {
+        usersRecord[targetAddress].google_name = name;
+      }
+      if (avatarUrl && !usersRecord[targetAddress].avatar_url) {
+        usersRecord[targetAddress].avatar_url = avatarUrl;
+      }
+      saveJSON(FILE_USERS, usersRecord);
+    }
+
+    res.json({ success: true, profile: usersRecord[targetAddress] });
   });
 
   // API - Fetch or create user profile based on Taproot address (bc1p...)

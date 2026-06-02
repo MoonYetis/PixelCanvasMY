@@ -17,6 +17,9 @@ export interface UserProfile {
   total_pixels_owned: number;
   created_at: number;
   flag_emoji?: string;
+  google_email?: string;
+  google_name?: string;
+  avatar_url?: string;
 }
 
 export interface PaintTransaction {

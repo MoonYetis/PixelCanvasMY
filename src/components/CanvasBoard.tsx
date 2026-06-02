@@ -43,6 +43,7 @@ interface CanvasBoardProps {
   userProfile: UserProfile | null;
   charges: number;
   maxCharges: number;
+  hasGlowBrush?: boolean;
   onPaintPixels: (pixels: { x: number; y: number; color: string }[], currency: "FB" | "MOONYETIS" | "PX") => Promise<any>;
   onTriggerStore: () => void;
   onTriggerProfile: () => void;
@@ -140,6 +141,7 @@ export default function CanvasBoard({
   userProfile,
   charges,
   maxCharges,
+  hasGlowBrush = false,
   onPaintPixels,
   onTriggerStore,
   onTriggerProfile,
@@ -379,6 +381,8 @@ export default function CanvasBoard({
   // Performance-optimized native wheel event listener that completely bypasses
   // Chrome/Safari "passive listener" scroll delays and enables ultra-fluid zoom transitions.
   const stateRef = useRef({ zoom, panX, panY });
+  const wheelRafRef = useRef<number | null>(null);
+
   useEffect(() => {
     stateRef.current = { zoom, panX, panY };
   }, [zoom, panX, panY]);
@@ -419,14 +423,23 @@ export default function CanvasBoard({
       const newPanX = mouseX - pixelX * newZoom;
       const newPanY = mouseY - pixelY * newZoom;
 
-      setZoom(newZoom);
-      setPanX(newPanX);
-      setPanY(newPanY);
+      if (wheelRafRef.current) {
+        cancelAnimationFrame(wheelRafRef.current);
+      }
+
+      wheelRafRef.current = requestAnimationFrame(() => {
+        setZoom(newZoom);
+        setPanX(newPanX);
+        setPanY(newPanY);
+      });
     };
 
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
       container.removeEventListener("wheel", handleWheel);
+      if (wheelRafRef.current) {
+        cancelAnimationFrame(wheelRafRef.current);
+      }
     };
   }, []);
 
@@ -518,37 +531,6 @@ export default function CanvasBoard({
       });
     }
 
-    // 5. Draw high precision 1px pixel-aligned cell boundary grids (Dynamic adaptive intensity based on zoom level)
-    if (drawZoom >= 3.0 && (showGridLines || drawZoom >= 4)) {
-      // Crisp, high-contrast grid lines for precise alignment reference
-      if (showGridLines) {
-        ctx.strokeStyle = "rgba(15, 23, 42, 0.45)"; // Highly visible dark charcoal
-        ctx.lineWidth = Math.max(0.12, 1.2 / drawZoom);
-      } else if (drawZoom >= 24) {
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.65)"; // Extra dark solid black borders for high zoom pixel artwork
-        ctx.lineWidth = 1.3 / drawZoom;
-      } else if (drawZoom >= 12) {
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.45)"; // Perfect dark boundaries
-        ctx.lineWidth = 1.1 / drawZoom;
-      } else if (drawZoom >= 6) {
-        ctx.strokeStyle = "rgba(15, 23, 42, 0.28)"; // Balanced reference guide lines
-        ctx.lineWidth = 1.0 / drawZoom;
-      } else {
-        ctx.strokeStyle = "rgba(100, 116, 139, 0.15)";
-        ctx.lineWidth = 0.12;
-      }
-
-      ctx.beginPath();
-      // Draw 1px aligned lines using single batch stroke (100x faster than separate stroke loops!)
-      for (let i = 0; i <= canvas.width; i += 1) {
-         ctx.moveTo(i, 0);
-         ctx.lineTo(i, canvas.height);
-         ctx.moveTo(0, i);
-         ctx.lineTo(canvas.width, i);
-      }
-      ctx.stroke();
-    }
-
     // 6. Draw all committed pixels on top
     if (drawZoom >= 3.0) {
       Object.keys(pixels).forEach((key) => {
@@ -578,7 +560,7 @@ export default function CanvasBoard({
     }
 
     // 8. Selected pixel target cursor highlight is rendered as a clean, high-contrast, non-bleeding HTML overlay on top!
-  }, [pixels, stagedPixels, selectedPixel, selectedColor, drawZoom, showGridLines, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
+  }, [pixels, stagedPixels, selectedPixel, selectedColor, drawZoom, mapMode, tacticalCanvas, satelliteCanvas, voyagerCanvas]);
 
   // Viewport zoom operations
   const handleZoomOffset = (direction: "in" | "out") => {
@@ -847,6 +829,21 @@ export default function CanvasBoard({
           }}
         />
 
+        {/* GPU-Accelerated CSS-Only Grid Overlay (Replaces expensive Canvas grid loop!) */}
+        <div
+          className="absolute origin-top-left pointer-events-none"
+          style={{
+            left: `${panX}px`,
+            top: `${panY}px`,
+            width: `${canvasWidth * zoom}px`,
+            height: `${canvasHeight * zoom}px`,
+            display: (showGridLines || zoom >= 8) ? "block" : "none",
+            backgroundImage: `linear-gradient(to right, rgba(15, 23, 42, 0.1) 1px, transparent 1px),
+                              linear-gradient(to bottom, rgba(15, 23, 42, 0.1) 1px, transparent 1px)`,
+            backgroundSize: `${zoom}px ${zoom}px`,
+          }}
+        />
+
         {/* Dynamic High-Contrast Sharp Target Overlays (Screen-Space Crisp Rendering) */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {/* Subtle cursor-hovered pixel shading reference */}
@@ -870,14 +867,20 @@ export default function CanvasBoard({
           {selectedPixel && (
             <>
               <div
-                className="absolute pointer-events-none border-2 border-purple-600 bg-purple-500/10"
+                className={`absolute pointer-events-none ${
+                  hasGlowBrush 
+                    ? "border-2 border-amber-400 bg-amber-400/20 active-glow shadow-[0_0_15px_rgba(245,158,11,1)] animate-pulse" 
+                    : "border-2 border-purple-600 bg-purple-500/10"
+                }`}
                 style={{
                   left: `${selectedPixel.x * zoom + panX}px`,
                   top: `${selectedPixel.y * zoom + panY}px`,
                   width: `${zoom}px`,
                   height: `${zoom}px`,
                   boxSizing: "border-box",
-                  boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.85)",
+                  boxShadow: hasGlowBrush
+                    ? "0 0 12px rgba(245, 158, 11, 0.9), inset 0 0 8px rgba(245,158,11,0.9)"
+                    : "0 0 0 1px rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.85)",
                 }}
               />
               {/* Glowing blue map-pin pointing exactly to the pixel */}
@@ -890,14 +893,14 @@ export default function CanvasBoard({
                 }}
               >
                 <div className="flex flex-col items-center animate-bounce origin-bottom">
-                  <svg className="w-8 h-8 drop-shadow-md text-blue-600 fill-blue-600" viewBox="0 0 24 24">
+                  <svg className={`w-8 h-8 drop-shadow-md ${hasGlowBrush ? "text-amber-500 fill-amber-500" : "text-blue-600 fill-blue-600"}`} viewBox="0 0 24 24">
                     <path 
                       d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" 
                       stroke="white" 
                       strokeWidth="1.5" 
                     />
                   </svg>
-                  <div className="-mt-1 w-1 h-1 bg-blue-600 rounded-full border border-white shadow animate-ping" />
+                  <div className={`-mt-1 w-1 h-1 ${hasGlowBrush ? "bg-amber-400" : "bg-blue-600"} rounded-full border border-white shadow animate-ping`} />
                 </div>
               </div>
             </>
@@ -909,14 +912,20 @@ export default function CanvasBoard({
             return (
               <div
                 key={key}
-                className="absolute pointer-events-none border border-slate-900/60 bg-transparent"
+                className={`absolute pointer-events-none border bg-transparent ${
+                  hasGlowBrush 
+                    ? "border-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)] ring-1 ring-amber-400" 
+                    : "border-slate-900/60"
+                }`}
                 style={{
                   left: `${sx * zoom + panX}px`,
                   top: `${sy * zoom + panY}px`,
                   width: `${zoom}px`,
                   height: `${zoom}px`,
                   boxSizing: "border-box",
-                  boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.5)",
+                  boxShadow: hasGlowBrush
+                    ? "0 0 6px rgba(245,158,11,0.8), inset 0 0 6px rgba(245,158,11,0.8)"
+                    : "inset 0 0 0 1px rgba(255, 255, 255, 0.5)",
                 }}
               />
             );

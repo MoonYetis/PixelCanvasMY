@@ -1,6 +1,7 @@
 import React, { useState, useEffect, FormEvent } from "react";
 import { PixelData, UserProfile, PaintTransaction, BlockchainBlock } from "./types";
 import CanvasBoard from "./components/CanvasBoard";
+import GoogleSignInPopup from "./components/GoogleSignInPopup";
 import { 
   Flame, 
   Terminal as TerminalIcon, 
@@ -35,7 +36,9 @@ import {
   MessageSquare,
   Send,
   LayoutDashboard,
-  Zap
+  Zap,
+  ArrowDown,
+  Plus
 } from "lucide-react";
 
 // Curated flags selection list
@@ -103,16 +106,34 @@ export default function App() {
     }
   };
 
+  // State for VIP Highlight Brush
+  const [hasGlowBrush, setHasGlowBrush] = useState<boolean>(() => {
+    return typeof window !== "undefined" && localStorage.getItem("wplace_glow_brush") === "true";
+  });
+
   // Active Charges Cooldown limit (wplace energy framework)
-  const [charges, setCharges] = useState<number>(50);
-  const [maxCharges, setMaxCharges] = useState<number>(50);
+  const [maxCharges, setMaxCharges] = useState<number>(() => {
+    if (typeof window === "undefined") return 50;
+    const saved = localStorage.getItem("wplace_max_charges");
+    return saved ? parseInt(saved, 10) : 50;
+  });
+  const [charges, setCharges] = useState<number>(() => {
+    if (typeof window === "undefined") return 50;
+    const saved = localStorage.getItem("wplace_max_charges");
+    return saved ? parseInt(saved, 10) : 50;
+  });
 
   // Interactive UI panel navigation layout (Sleek minimalist sidebar)
   // Options: null | "store" | "leaderboard" | "feed" | "rules" | "developer_rpc"
   const [activeMenuOverlay, setActiveMenuOverlay] = useState<string | null>(null);
 
+  // DEX Swap Interface State (Uniswap styles)
+  const [swapPayToken, setSwapPayToken] = useState<"FB" | "MOONYETIS">("FB");
+  const [swapPayAmount, setSwapPayAmount] = useState<string>("0.5");
+
   // Modals layout
   const [showProfileSelector, setShowProfileSelector] = useState(false);
+  const [showGooglePopup, setShowGooglePopup] = useState(false);
 
   // Profile customization fields
   const [tempUsername, setTempUsername] = useState("");
@@ -428,12 +449,16 @@ export default function App() {
       } else if (item.reward === "cap100") {
         setMaxCharges(100);
         setCharges(100);
+        localStorage.setItem("wplace_max_charges", "100");
         alert(`⚡ Core boosted! Memory limit expanded to 100 max charges.`);
       } else if (item.reward === "cap200") {
         setMaxCharges(200);
         setCharges(200);
+        localStorage.setItem("wplace_max_charges", "200");
         alert(`⚡ Colossal booster! Capacity upgraded to 200 max charges.`);
       } else if (item.reward === "glow") {
+        setHasGlowBrush(true);
+        localStorage.setItem("wplace_glow_brush", "true");
         alert("✨ Neon Highlight Brush acquired! The stroke edges will now glow during pixel edits.");
       }
 
@@ -484,8 +509,63 @@ export default function App() {
     }
     const finalAddr = "bc1p" + randomStr;
     localStorage.setItem("wplace_address", finalAddr);
+    // Clear Google session details on full wipe too
+    localStorage.removeItem("wplace_google_email");
+    localStorage.removeItem("wplace_google_name");
     setAddress(finalAddr);
     alert(`💡 New Taproot Sandbox address established! Your credentials and painting logs have been refreshed: ${finalAddr}`);
+  };
+
+  // Google Sign-In & Logout Handlers
+  const handleGoogleLoginSuccess = async (email: string, name: string, avatarUrl: string) => {
+    try {
+      const response = await fetch("/api/users/google-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          name,
+          avatarUrl,
+          currentAddress: address
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.profile) {
+          const userProf = data.profile;
+          setAddress(userProf.address);
+          setProfile(userProf);
+          localStorage.setItem("wplace_address", userProf.address);
+          localStorage.setItem("wplace_google_email", email);
+          localStorage.setItem("wplace_google_name", name);
+          setTempUsername(userProf.username);
+          setTempFlag(userProf.flag_emoji || "🇺🇸");
+          setShowGooglePopup(false);
+        }
+      }
+    } catch (err) {
+      console.error("Google authentication integration failed:", err);
+    }
+  };
+
+  const handleGoogleLogout = () => {
+    localStorage.removeItem("wplace_google_email");
+    localStorage.removeItem("wplace_google_name");
+    triggerTone(329.63, "sine", 0.08);
+    
+    const chars = "abcdef0123456789";
+    let randomStr = "";
+    for (let i = 0; i < 58; i++) {
+      randomStr += chars[Math.floor(Math.random() * chars.length)];
+    }
+    const finalAddr = "bc1p" + randomStr;
+    localStorage.setItem("wplace_address", finalAddr);
+    setAddress(finalAddr);
+    
+    setTimeout(() => {
+      fetchUserProfile();
+    }, 100);
   };
 
   // Generate fake high score nations leaderboard list (Mimicking wplace.live leaderboard metrics)
@@ -509,6 +589,7 @@ export default function App() {
           userProfile={profile}
           charges={charges}
           maxCharges={maxCharges}
+          hasGlowBrush={hasGlowBrush}
           onPaintPixels={handlePaintSubmit}
           onTriggerStore={() => setActiveMenuOverlay(activeMenuOverlay === "store" ? null : "store")}
           onTriggerProfile={() => setShowProfileSelector(true)}
@@ -556,14 +637,40 @@ export default function App() {
 
                 {/* Profile Card Summary */}
                 <div className="bg-gradient-to-br from-indigo-50/50 to-purple-50 border border-indigo-100/65 rounded-xl p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl leading-none" role="img" aria-label="your flag">
-                      {profile?.flag_emoji || "🇺🇸"}
-                    </span>
-                    <div>
-                      <div className="font-bold text-xs text-slate-900 leading-snug flex items-center gap-1.5">
-                        <span>{profile?.username || "Guest Painter"}</span>
-                        <span className="text-[8px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded uppercase font-bold tracking-tight">Active</span>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {profile?.google_email ? (
+                      <div className="relative shrink-0">
+                        <img 
+                          src={profile.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(profile.google_email)}`} 
+                          alt="Google Avatar" 
+                          className="w-10 h-10 rounded-full border border-indigo-250 shadow-2xs"
+                        />
+                        <div className="absolute -bottom-0.5 -right-0.5 bg-white rounded-full p-0.5 border border-slate-100 shadow-3xs">
+                          <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24">
+                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                          </svg>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-2xl leading-none bg-indigo-100/50 w-10 h-10 rounded-full flex items-center justify-center shrink-0" role="img" aria-label="your flag">
+                        {profile?.flag_emoji || "🇺🇸"}
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs text-slate-900 leading-snug flex items-center gap-1.5 min-w-0">
+                        <span className="truncate max-w-[120px]">{profile?.username || "Guest Painter"}</span>
+                        {profile?.google_email ? (
+                          <span className="text-[7.5px] bg-blue-105 text-blue-700 px-1 py-0.2 rounded uppercase font-extrabold tracking-tight shrink-0 flex items-center gap-0.5">
+                            Google Verified
+                          </span>
+                        ) : (
+                          <span className="text-[7.5px] bg-slate-150 text-slate-600 px-1 py-0.2 rounded uppercase font-extrabold tracking-tight shrink-0">
+                            Offline Sandbox
+                          </span>
+                        )}
                       </div>
                       <span className="text-[9px] font-mono text-slate-450 block truncate max-w-[150px] mt-0.5">
                         {address}
@@ -575,9 +682,9 @@ export default function App() {
                       setActiveMenuOverlay(null);
                       setShowProfileSelector(true);
                     }}
-                    className="py-1 px-2.5 bg-white border border-slate-200 hover:border-purple-300 hover:text-purple-600 rounded text-[10px] font-bold text-slate-505 transition-all text-center cursor-pointer shadow-2xs"
+                    className="py-1 px-2 bg-white border border-slate-200 hover:border-purple-300 hover:text-purple-600 rounded text-[10px] font-bold text-slate-505 transition-all text-center cursor-pointer shadow-2xs shrink-0 ml-1.5"
                   >
-                    Edit flag
+                    Manage Profile
                   </button>
                 </div>
 
@@ -805,79 +912,315 @@ export default function App() {
 
             {/* OVERLAY PANEL A: STORE CATELOG */}
             {activeMenuOverlay === "store" && (
-              <div className="space-y-4 text-slate-800 animate-fade-in">
+              <div className="space-y-4 text-slate-800 animate-fade-in pb-4">
                 <p className="text-[11px] text-slate-500 leading-normal border-b border-slate-100 pb-2">
                   Exchange your coins or MoonYetis to buy Pixel Tokens (PX), then unlock high-fidelity boosters and energy upgrades!
                 </p>
 
-                {/* Swapper segment in the Store directly! */}
-                <div className="border border-purple-100 bg-purple-50/20 p-2.5 rounded-xl space-y-2">
-                  <div className="flex justify-between items-center text-slate-700">
-                    <span className="text-[9px] font-mono uppercase tracking-widest font-extrabold text-purple-600">Quick Exchange</span>
-                    <span className="font-mono text-[10px] font-bold text-slate-550">
-                      Balance: <span className="text-purple-600 font-extrabold">{profile ? (profile.pixel_tokens_balance ?? 150) : 150} PX</span>
-                    </span>
+                {/* Wallet Balance Cards (Aesthetic dashboard chips) */}
+                <div className="grid grid-cols-3 gap-1.5 pt-1">
+                  <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-2 text-center">
+                    <span className="text-[8px] font-mono uppercase text-slate-400 font-black block">Pixel Tokens</span>
+                    <strong className="text-purple-600 text-sm font-black font-mono block mt-0.5">
+                      {profile ? (profile.pixel_tokens_balance ?? 150) : 150} <span className="text-[9px]">PX</span>
+                    </strong>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-white border border-slate-150 p-2 rounded-lg flex flex-col justify-between text-2xs">
-                      <strong className="text-slate-800 block">0.5 FB ➔ 50 PX</strong>
-                      <button
-                        onClick={() => triggerTokenSwap("FB", 0.5, 50)}
-                        disabled={isSwapping}
-                        className="mt-1 px-1.5 py-0.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-850 text-[9px] rounded font-bold border border-yellow-250/50 cursor-pointer"
-                      >
-                        Swap 0.5 FB
-                      </button>
-                    </div>
-
-                    <div className="bg-white border border-slate-150 p-2 rounded-lg flex flex-col justify-between text-2xs relative overflow-hidden">
-                      <div className="absolute top-0 right-0 bg-emerald-500 text-white font-mono text-[6px] px-1 rounded-bl">Bonus</div>
-                      <strong className="text-slate-800 block">1.0 FB ➔ 120 PX</strong>
-                      <button
-                        onClick={() => triggerTokenSwap("FB", 1.0, 120)}
-                        disabled={isSwapping}
-                        className="mt-1 px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[9px] rounded font-bold border border-emerald-250/50 cursor-pointer"
-                      >
-                        Swap 1.0 FB
-                      </button>
-                    </div>
+                  <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-2 text-center">
+                    <span className="text-[8px] font-mono uppercase text-slate-400 font-black block">Fractal BTC</span>
+                    <strong className="text-amber-600 text-sm font-black font-mono block mt-0.5 truncate" title={profile ? profile.fb_balance?.toString() : "2.5"}>
+                      {profile ? (profile.fb_balance ?? 2.5).toFixed(2) : "2.50"} <span className="text-[9px]">FB</span>
+                    </strong>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-2 text-center">
+                    <span className="text-[8px] font-mono uppercase text-slate-400 font-black block">MoonYetis</span>
+                    <strong className="text-indigo-600 text-sm font-black font-mono block mt-0.5 truncate">
+                      {profile ? (profile.mooneyetis_balance ?? 1250) : 1250} <span className="text-[9px]">MY</span>
+                    </strong>
                   </div>
                 </div>
+
+                {/* Swapper segment in the Store directly! */}
+                {(() => {
+                  const currentPayBalance = swapPayToken === "FB" 
+                    ? (profile?.fb_balance ?? 2.5) 
+                    : (profile?.mooneyetis_balance ?? 1250);
+
+                  const parsedPayAmount = parseFloat(swapPayAmount);
+                  const isAmountValid = !isNaN(parsedPayAmount) && parsedPayAmount > 0;
+
+                  const swapReceiveAmount = (() => {
+                    if (!isAmountValid) return 0;
+                    if (swapPayToken === "FB") {
+                      // 1 FB = 100 PX, but if payAmount >= 1.0, 1.0 FB = 120 PX (bulk bonus!)
+                      return parsedPayAmount >= 1.0 ? Math.floor(parsedPayAmount * 120) : Math.floor(parsedPayAmount * 100);
+                    } else {
+                      // 250 MY = 50 PX (0.2x), 500 MY = 120 PX (0.24x)
+                      return parsedPayAmount >= 500 ? Math.floor(parsedPayAmount * 0.24) : Math.floor(parsedPayAmount * 0.20);
+                    }
+                  })();
+
+                  const activeRateText = swapPayToken === "FB"
+                    ? `1 FB = ${parsedPayAmount >= 1.0 ? "120" : "100"} PX`
+                    : `1 MY = ${parsedPayAmount >= 500 ? "0.24" : "0.20"} PX`;
+
+                  const swapBtnDisabled = !address || isSwapping || !isAmountValid || parsedPayAmount > currentPayBalance;
+
+                  return (
+                    <div className="bg-[#12131a] text-slate-100 border border-slate-800 rounded-3xl p-4 space-y-3.5 relative overflow-hidden shadow-xl shadow-purple-950/20">
+                      {/* Tabs bar */}
+                      <div className="flex items-center justify-between border-b border-slate-850/80 pb-2">
+                        <div className="flex gap-4">
+                          <span className="text-xs font-sans font-black text-[#f5a623] border-b-2 border-[#f5a623] pb-1 cursor-pointer">
+                            Swap
+                          </span>
+                        </div>
+                        <div className="flex gap-2 text-slate-400">
+                          <button 
+                            onClick={() => {
+                              setSwapPayAmount(swapPayToken === "FB" ? "0.5" : "250");
+                              triggerTone(440, "sine", 0.05);
+                            }}
+                            className="p-1 hover:text-white rounded hover:bg-slate-800/50 transition-colors cursor-pointer"
+                            title="Restaurar valores predeterminados"
+                          >
+                            <Plus className="w-3.5 h-3.5 rotate-45" />
+                          </button>
+                          <button className="p-1 hover:text-white rounded hover:bg-slate-800/50 transition-colors cursor-pointer">
+                            <Settings className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* BLOCK 1: You Pay */}
+                      <div className="bg-[#1b1c24] border border-slate-800/60 rounded-2xl p-3.5 space-y-2 relative">
+                        <div className="flex justify-between text-[11px] text-slate-400">
+                          <span className="font-medium">Tú Pagas (You Pay)</span>
+                          <span className="font-mono text-slate-400">
+                            Balance: <strong className="text-slate-200">{swapPayToken === "FB" ? currentPayBalance.toFixed(2) : currentPayBalance}</strong>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={swapPayAmount}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                                setSwapPayAmount(val);
+                              }
+                            }}
+                            placeholder="0.0"
+                            className="bg-transparent text-slate-100 text-2xl font-mono font-bold focus:outline-none w-1/2"
+                          />
+
+                          {/* Token Selector Button */}
+                          <div className="relative shrink-0">
+                            <div className="flex bg-[#23242f] hover:bg-[#2d2e3d] border border-slate-800 rounded-2xl p-1.5 px-3 items-center gap-2 cursor-pointer select-none transition-all"
+                              onClick={() => {
+                                const nextToken = swapPayToken === "FB" ? "MOONYETIS" : "FB";
+                                setSwapPayToken(nextToken);
+                                setSwapPayAmount(nextToken === "FB" ? "0.5" : "250");
+                                triggerTone(329.63, "triangle", 0.06);
+                              }}
+                            >
+                              {swapPayToken === "FB" ? (
+                                <>
+                                  <div className="w-5 h-5 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 flex items-center justify-center text-[9px] font-black text-white shrink-0 border border-amber-300/30 shadow-md">
+                                    FB
+                                  </div>
+                                  <span className="text-xs font-black tracking-wide text-slate-100">Fractal BTC</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-base leading-none shrink-0" title="MoonYeti">🏔️</span>
+                                  <span className="text-xs font-black tracking-wide text-slate-100">MoonYeti</span>
+                                </>
+                              )}
+                              <ChevronRight className="w-3.5 h-3.5 text-slate-400 rotate-90" />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* DOWN ARROW */}
+                      <div className="flex justify-center -my-6 relative z-10">
+                        <button 
+                          onClick={() => {
+                            triggerTone(587.33, "triangle", 0.05);
+                          }}
+                          className="w-8 h-8 rounded-full bg-[#f5a623] hover:scale-105 active:scale-95 border-4 border-[#12131a] flex items-center justify-center text-[#12131a] shadow-lg transition-transform cursor-pointer"
+                        >
+                          <ArrowDown className="w-4 h-4 stroke-[3]" />
+                        </button>
+                      </div>
+
+                      {/* BLOCK 2: You Receive */}
+                      <div className="bg-[#1b1c24] border border-slate-800/60 rounded-2xl p-3.5 space-y-2 relative">
+                        <div className="flex justify-between text-[11px] text-slate-400">
+                          <span className="font-medium">Tú Recibes (You Receive)</span>
+                          <span className="font-mono text-slate-400">
+                            Balance: <strong className="text-purple-300">{profile ? (profile.pixel_tokens_balance ?? 150) : 150} PX</strong>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-slate-200 text-2xl font-mono font-bold select-all">
+                            {swapReceiveAmount}
+                          </div>
+
+                          <div className="flex bg-[#23242f] border border-slate-800 rounded-2xl p-1.5 px-3 items-center gap-1.5 select-none shrink-0">
+                            <Coins className="w-4 h-4 text-purple-400 fill-purple-400/20" />
+                            <span className="text-xs font-black tracking-wide text-slate-100">Pixel Tokens</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* EXCHANGE DETAILS */}
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1 font-sans">
+                        <span className="flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Tipo de cambio (Exchange rate):
+                        </span>
+                        <strong className="text-slate-250 font-mono tracking-wide">
+                          {activeRateText}
+                        </strong>
+                      </div>
+
+                      {/* Bulk Bonus Active Warning */}
+                      {((swapPayToken === "FB" && parsedPayAmount >= 1.0) || 
+                        (swapPayToken === "MOONYETIS" && parsedPayAmount >= 500)) && (
+                        <div className="bg-emerald-950/40 text-emerald-300 text-[10px] font-sans border border-emerald-900/40 rounded-lg p-2.5 flex items-center justify-between">
+                          <span className="font-semibold flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                            ¡Bono de volumen activado! (+20% PX)
+                          </span>
+                          <span className="font-mono text-[9px] bg-emerald-900/80 px-2 py-0.5 rounded font-black">20% BONUS</span>
+                        </div>
+                      )}
+
+                      {/* MAIN CTA BUTTON */}
+                      <button
+                        disabled={swapBtnDisabled}
+                        onClick={() => {
+                          if (isAmountValid) {
+                            triggerTokenSwap(swapPayToken, parsedPayAmount, swapReceiveAmount);
+                          }
+                        }}
+                        className={`w-full py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer text-slate-900 bg-gradient-to-r from-amber-400 to-[#f5a623] hover:from-amber-300 hover:to-orange-500 active:scale-[0.98] ${
+                          swapBtnDisabled ? "opacity-40 cursor-not-allowed grayscale pointer-events-none" : ""
+                        }`}
+                      >
+                        {isSwapping ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+                            Procesando Intercambio...
+                          </>
+                        ) : parsedPayAmount > currentPayBalance ? (
+                          "Saldo Insuficiente de " + swapPayToken
+                        ) : !isAmountValid ? (
+                          "Ingresa un monto válido"
+                        ) : !address ? (
+                          "Conectar Billetera de Pintor"
+                        ) : (
+                          `Intercambiar por ${swapReceiveAmount} PX`
+                        )}
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* Main Upgrades Grid */}
                 <div className="space-y-2">
                   <span className="text-[9px] font-mono uppercase text-slate-400 tracking-widest block font-bold">Premium Upgrades</span>
 
-                  {STORE_ITEMS.map((item) => (
-                    <div 
-                      key={item.id} 
-                      className="bg-slate-50 border border-slate-200 hover:bg-slate-105/50 rounded-xl p-3 flex flex-col justify-between transition-all gap-2"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-bold text-xs text-slate-900">{item.title}</h4>
-                          <p className="text-[10px] text-slate-500 leading-snug mt-1">{item.desc}</p>
-                        </div>
-                        {item.reward === "refill" ? (
-                          <span className="text-[9px] font-mono px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded font-semibold shrink-0 uppercase">One-time</span>
-                        ) : (
-                          <span className="text-[9px] font-mono px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded font-semibold shrink-0 uppercase">Upgrade</span>
-                        )}
-                      </div>
+                  {STORE_ITEMS.map((item) => {
+                    // Check active state statuses for each upgrade!
+                    let isEquipped = false;
+                    let customizedLabel = "";
+                    
+                    if (item.id === "brush_auras" && hasGlowBrush) {
+                      isEquipped = true;
+                      customizedLabel = "VIP ACTIVE";
+                    } else if (item.id === "max_cap_1" && maxCharges >= 100) {
+                      isEquipped = true;
+                      customizedLabel = "UPGRADED";
+                    } else if (item.id === "max_cap_2" && maxCharges >= 200) {
+                      isEquipped = true;
+                      customizedLabel = "COLLOSAL ACTIVE";
+                    }
 
-                      <div className="flex justify-between items-center border-t border-slate-150 pt-2 mt-1">
-                        <span className="text-2xs font-mono text-slate-500">COST: <strong className="text-purple-600 font-extrabold">{item.cost_px} PX</strong></span>
-                        <button
-                          onClick={() => handlePurchaseItem(item)}
-                          className="py-1 px-3 bg-purple-600 hover:bg-purple-500 rounded text-2xs font-bold text-white cursor-pointer transition-all active:scale-95 flex items-center gap-1 shadow shadow-purple-600/10"
-                        >
-                          Unlock
-                          <ChevronRight className="w-3 h-3" />
-                        </button>
+                    // Special tag decorations
+                    const price = item.cost_px;
+                    const canAfford = (profile ? (profile.pixel_tokens_balance ?? 150) : 150) >= price;
+
+                    return (
+                      <div 
+                        key={item.id} 
+                        className={`border rounded-xl p-3 flex flex-col justify-between transition-all gap-2 relative ${
+                          isEquipped 
+                            ? "bg-slate-50/50 border-slate-250 opacity-90" 
+                            : "bg-white border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-0.5">
+                            <h4 className="font-extrabold text-xs text-slate-900 flex items-center gap-1.5">
+                              {item.id === "brush_auras" && <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-100" />}
+                              {item.id === "charge_refill" && <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-200" />}
+                              {item.id === "max_cap_1" && <Cpu className="w-3.5 h-3.5 text-indigo-500" />}
+                              {item.id === "max_cap_2" && <Layers className="w-3.5 h-3.5 text-purple-500" />}
+                              {item.title}
+                            </h4>
+                            <p className="text-[10px] text-slate-455 leading-tight">{item.desc}</p>
+                          </div>
+                          {isEquipped ? (
+                            <span className="text-[8px] font-mono px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-md font-extrabold shrink-0 uppercase tracking-wider flex items-center gap-0.5 animate-pulse">
+                              <Check className="w-2.5 h-2.5" />
+                              {customizedLabel}
+                            </span>
+                          ) : item.reward === "refill" ? (
+                            <span className="text-[8px] font-mono px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-md font-bold shrink-0 uppercase tracking-wide">One-Time</span>
+                          ) : (
+                            <span className="text-[8px] font-mono px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-md font-bold shrink-0 uppercase tracking-wide">Boost</span>
+                          )}
+                        </div>
+
+                        <div className="flex justify-between items-center border-t border-slate-100 pt-2.5 mt-0.5">
+                          <span className="text-[10px] font-mono text-slate-500">
+                            COST: <strong className="text-purple-600 font-extrabold">{price} PX</strong>
+                          </span>
+                          
+                          {isEquipped ? (
+                            <button
+                              disabled
+                              className="py-1 px-3 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black text-slate-400 cursor-not-allowed flex items-center gap-1"
+                            >
+                              Equipped
+                              <Check className="w-3 h-3 text-emerald-500" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                handlePurchaseItem(item);
+                                triggerTone(587.33, "triangle", 0.1); // Beautiful positive sound node upon buying!
+                              }}
+                              disabled={!canAfford}
+                              className={`py-1 px-3 rounded-lg text-[10px] font-extrabold text-white cursor-pointer active:scale-95 transition-all flex items-center gap-1 shadow-sm ${
+                                canAfford
+                                  ? "bg-purple-600 hover:bg-purple-500 shadow-purple-600/15"
+                                  : "bg-slate-350 hover:bg-slate-350 cursor-not-allowed opacity-60"
+                              }`}
+                            >
+                              Unlock
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1150,11 +1493,79 @@ export default function App() {
 
             <div className="h-px bg-slate-100" />
 
+            {/* Google Synchronization Integration segment */}
+            <div className="space-y-2.5">
+              <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest block font-semibold">
+                3. Google Authentication
+              </span>
+
+              {profile?.google_email ? (
+                <div className="bg-emerald-50/50 border border-emerald-150 rounded-xl p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative shrink-0">
+                      <img 
+                        src={profile.avatar_url || `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(profile.google_email)}`} 
+                        alt="Google Avatar" 
+                        className="w-8 h-8 rounded-full border border-emerald-250 shadow-xs"
+                      />
+                      <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 border border-slate-150">
+                        <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-sans font-bold text-slate-800 text-2xs truncate">
+                        {profile.google_name || "Google User"}
+                      </p>
+                      <p className="font-mono text-[9px] text-slate-455 truncate">
+                        {profile.google_email}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={handleGoogleLogout}
+                    className="py-1 px-2 hover:bg-red-50 border border-slate-200 hover:border-red-200 text-slate-455 hover:text-red-600 rounded text-[9px] font-bold transition-all cursor-pointer"
+                  >
+                    Unlink Account
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                  <p className="text-[10px] text-slate-505 font-sans leading-normal text-slate-500">
+                    Conecta tu cuenta de Google para respaldar tu progreso, tus tokens de píxeles y acceder a tableros especiales en la nube.
+                  </p>
+                  
+                  <button
+                    onClick={() => {
+                      setShowProfileSelector(false);
+                      setShowGooglePopup(true);
+                    }}
+                    className="w-full py-2 bg-white hover:bg-slate-50 border border-slate-250 shadow-2xs hover:shadow-1xs text-slate-755 font-sans font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer hover:border-slate-350"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Iniciar sesión con Google
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="h-px bg-slate-100" />
+
             {/* Faucet claim mechanics */}
             <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[9px] font-mono text-slate-450 uppercase tracking-widest font-semibold">
-                  3. Sandbox Ledger Faucets
+                  4. Sandbox Ledger Faucets
                 </span>
                 <span className="text-[10px] text-slate-505 font-mono italic">instant balance test</span>
               </div>
@@ -1201,6 +1612,14 @@ export default function App() {
 
           </div>
         </div>
+      )}
+
+      {showGooglePopup && (
+        <GoogleSignInPopup
+          onClose={() => setShowGooglePopup(false)}
+          onSuccess={handleGoogleLoginSuccess}
+          triggerTone={triggerTone}
+        />
       )}
 
       {/* 6. COMNEX SYNC TICKER: Miniature footer panel overlay */}
