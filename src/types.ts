@@ -3,6 +3,7 @@ export interface PixelData {
   y: number;
   color: string;
   owner: string; // bc1p... Address
+  ownerUsername?: string; // Painter username
   pricePaid: number; // FB, Moonyetis or PX
   currency: 'FB' | 'MOONYETIS' | 'PX';
   timestamp: number;

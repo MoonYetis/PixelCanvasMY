@@ -119,9 +119,18 @@ export default function App() {
   });
   const [charges, setCharges] = useState<number>(() => {
     if (typeof window === "undefined") return 50;
+    const currentSaved = localStorage.getItem("wplace_charges");
+    if (currentSaved) return parseInt(currentSaved, 10);
     const saved = localStorage.getItem("wplace_max_charges");
     return saved ? parseInt(saved, 10) : 50;
   });
+
+  // Persist current charges to localStorage whenever they change
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("wplace_charges", charges.toString());
+    }
+  }, [charges]);
 
   // Interactive UI panel navigation layout (Sleek minimalist sidebar)
   // Options: null | "store" | "leaderboard" | "feed" | "rules" | "developer_rpc"

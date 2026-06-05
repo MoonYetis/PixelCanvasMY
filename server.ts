@@ -110,6 +110,7 @@ if (Object.keys(pixelsRecord).length === 0) {
           y,
           color,
           owner: adminAddress,
+          ownerUsername: "Satoshi_Art",
           pricePaid: 0.05,
           currency: "FB",
           timestamp: Date.now() - 3600000 // 1 hour ago
@@ -138,6 +139,7 @@ if (Object.keys(pixelsRecord).length === 0) {
       y,
       color: "#a855f7",
       owner: adminAddress,
+      ownerUsername: "Yeti_Patron",
       pricePaid: 0.1,
       currency: "MOONYETIS",
       timestamp: Date.now() - 1200000
@@ -200,11 +202,13 @@ setInterval(() => {
 
       // Commit the paint modifications in canvas persistence on block confirmation!
       tx.pixels.forEach(p => {
+        const userProf = usersRecord[tx.address];
         pixelsRecord[`${p.x},${p.y}`] = {
           x: p.x,
           y: p.y,
           color: p.color,
           owner: tx.address,
+          ownerUsername: userProf ? userProf.username : `Painter-${tx.address.substring(4, 9)}`,
           pricePaid: tx.totalCost / tx.pixels.length,
           currency: tx.currency,
           timestamp: Date.now()

@@ -27,6 +27,7 @@ import {
   RotateCw,
   Image as ImageIcon,
   Paintbrush,
+  Palette,
   ShoppingCart,
   Globe,
   MessageSquare,
@@ -53,6 +54,7 @@ interface CanvasBoardProps {
 }
 
 const PALETTE = [
+  "transparent", // Correction Eraser
   "#e11d48", // Rose Red
   "#f43f5e", // Light Pink
   "#ea580c", // Orange
@@ -69,7 +71,6 @@ const PALETTE = [
   "#ffffff", // Snow White
   "#64748b", // Slate Gray
   "#030712", // Matte Black
-  "transparent", // Correction Eraser
 ];
 
 // Stylized geographical continent coordinates (mesh boundary data)
@@ -204,6 +205,70 @@ export default function CanvasBoard({
 
   // Map background projection mode presets (fixed to voyager)
   const [mapMode, setMapMode] = useState<"tactical" | "satellite" | "voyager" | "classic">("voyager");
+
+  // Persistent Favorites & Live Shares
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("wplace_favorites");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showSharePopover, setShowSharePopover] = useState<boolean>(false);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [customPalette, setCustomPalette] = useState<string[]>(() => {
+    // Start with a copy of PALETTE
+    return [...PALETTE];
+  });
+  const [showExtendedColors, setShowExtendedColors] = useState<boolean>(false);
+
+  // 40 Beautiful unique color presets spanning the whole spectrum for the extended palette picker
+  const EXTENDED_COLORS = [
+    "#990000", "#d73a49", "#ff6b6b", "#ffccd5", // Reds & Pinks
+    "#db2777", "#f472b6", "#ffc4d6", "#4a0404", // Magentas / Dark Maroon
+    "#7c2d12", "#ea580c", "#ff9233", "#ffd166", // Browns & Oranges
+    "#eab308", "#fef08a", "#fef9c3", "#3f2d1e", // Yellows & Dark Wood
+    "#064e3b", "#22c55e", "#4ade80", "#a7f3d0", // Greens
+    "#0891b2", "#22d3ee", "#e0f7fa", "#004b49", // Cyans & Dark Teal
+    "#1e3a8a", "#2563eb", "#60a5fa", "#d0e1fd", // Blues
+    "#4c1d95", "#8b5cf6", "#c084fc", "#f3e8ff", // Purples
+    "#2d3748", "#4a5568", "#718096", "#a0aec0", // Slate & Dark Grays
+    "#1a202c", "#ffffff", "#e2e8f0", "#ebdcb9"  // Black, White, Soft Sand
+  ];
+
+  const handleSelectExtendedColor = (colorHex: string) => {
+    const withoutTransparent = customPalette.filter(c => c !== "transparent" && c !== colorHex);
+    // Add the selected color as the first option after transparent (eraser) and slice to keep size identical
+    const newSubset = [colorHex, ...withoutTransparent].slice(0, PALETTE.length - 1);
+    const updated = ["transparent", ...newSubset];
+    setCustomPalette(updated);
+    setSelectedColor(colorHex);
+
+    if (selectedPixel) {
+      const key = `${selectedPixel.x},${selectedPixel.y}`;
+      setStagedPixels(prev => ({
+        ...prev,
+        [key]: colorHex
+      }));
+    }
+    triggerBeep(784, "sine", 0.05);
+    setShowExtendedColors(false);
+  };
+
+  const handleToggleFavorite = (x: number, y: number) => {
+    const key = `${x},${y}`;
+    const updated = favorites.includes(key)
+      ? favorites.filter((k) => k !== key)
+      : [...favorites, key];
+    setFavorites(updated);
+    try {
+      localStorage.setItem("wplace_favorites", JSON.stringify(updated));
+    } catch (err) {
+      console.error("Failed to commit favorites", err);
+    }
+    triggerBeep(updated.includes(key) ? 587.33 : 349.23, "sine", 0.08);
+  };
   
   // High-fidelity preloaded tiled canvases
   const [tacticalCanvas, setTacticalCanvas] = useState<HTMLCanvasElement | null>(null);
@@ -1255,24 +1320,47 @@ export default function CanvasBoard({
             <div className="flex items-start justify-between gap-3">
               {/* Left & Middle section */}
               <div className="flex items-center gap-3">
-                {/* Large Round Alliance/Mesh Avatar (Image 1 style) */}
-                <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-fuchsia-100 to-pink-100 border border-pink-200/60 shadow-inner flex items-center justify-center text-pink-500 font-extrabold text-xl shrink-0">
-                  {selectedPixelDetails ? (
-                    <span style={{ color: selectedPixelDetails.color }}>✝</span>
-                  ) : (
-                    "⁕"
-                  )}
-                </div>
+                {/* Large Round Avatar: Painter Profile Photo or Generic Grid Icon */}
+                {selectedPixelDetails ? (
+                  <div className="w-12 h-12 rounded-full overflow-hidden border border-indigo-200/80 shadow bg-slate-50 flex items-center justify-center shrink-0">
+                    <img
+                      src={`https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(selectedPixelDetails.owner)}`}
+                      alt={selectedPixelDetails.ownerUsername || "Painter"}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-slate-100 border border-dashed border-slate-300 shadow-inner flex items-center justify-center text-slate-400 shrink-0">
+                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <rect x="3" y="3" width="18" height="18" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <line x1="9" y1="9" x2="15" y2="15" strokeLinecap="round" />
+                      <line x1="15" y1="9" x2="9" y2="15" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                )}
 
                 {/* Info & Badges block */}
-                <div className="flex flex-col gap-1 min-w-0">
+                <div className="flex flex-col gap-0.5 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <h3 className="font-sans font-extrabold text-base text-slate-900 tracking-tight truncate leading-tight">
-                      {selectedPixelDetails ? `Meow #${Math.floor(selectedPixel.x * 123 + selectedPixel.y * 456) % 10000000}` : "Meow #12589239"}
+                      {selectedPixelDetails ? (selectedPixelDetails.ownerUsername || "Painter Guest") : "Libre"}
                     </h3>
                   </div>
+                  
+                  {selectedPixelDetails ? (
+                    <div className="text-[10px] font-mono text-slate-500 truncate max-w-[160px] leading-normal" title={selectedPixelDetails.owner}>
+                      {selectedPixelDetails.owner.substring(0, 16)}...
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-emerald-600 font-bold tracking-wide flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Disponible para pintar
+                    </div>
+                  )}
+
                   <span className="text-[10px] text-slate-400 font-medium tracking-wide">
-                    {selectedPixelDetails ? `Alianza: ${selectedPixelDetails.owner.substring(0, 10)}...` : "Sin alianza"}
+                    {selectedPixelDetails ? (selectedPixelDetails.owner === currentAddress ? "¡Tuyo!" : "Sin alianza") : "Aún sin pintar"}
                   </span>
                   
                   {/* Badges */}
@@ -1281,21 +1369,122 @@ export default function CanvasBoard({
                       <MapPin className="w-3 h-3 text-blue-500 fill-blue-500/10" />
                       {selectedPixel.x}, {selectedPixel.y}
                     </span>
-                    <span className="flex items-center gap-1 bg-slate-50 text-slate-650 border border-slate-150 rounded-full px-2.5 py-0.5 font-sans text-[10px] font-bold">
-                      🇯🇵 Tokyo #1
-                    </span>
                   </div>
                 </div>
               </div>
 
               {/* Right Options Button & Close Button */}
-              <div className="flex items-center gap-1 shrink-0">
-                <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
-                  <Star className="w-4 h-4 text-slate-400 fill-transparent hover:text-amber-500 hover:fill-amber-400" />
+              <div className="flex items-center gap-1 shrink-0 relative">
+                <button 
+                  onClick={() => handleToggleFavorite(selectedPixel.x, selectedPixel.y)}
+                  title={favorites.includes(`${selectedPixel.x},${selectedPixel.y}`) ? "Quitar de favoritos" : "Agregar a favoritos"}
+                  className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer"
+                >
+                  <Star 
+                    className={`w-4 h-4 transition-all duration-150 ${
+                      favorites.includes(`${selectedPixel.x},${selectedPixel.y}`)
+                        ? "text-amber-500 fill-amber-400 scale-110"
+                        : "text-slate-400 fill-transparent hover:text-amber-500 hover:fill-amber-400"
+                    }`} 
+                  />
                 </button>
-                <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
-                  <Share2 className="w-4 h-4" />
-                </button>
+                
+                <div className="relative">
+                  <button 
+                    onClick={() => {
+                      triggerBeep(350, "sine", 0.05);
+                      setShowSharePopover(!showSharePopover);
+                    }}
+                    title="Compartir"
+                    className={`p-1.5 rounded-full border transition-all cursor-pointer ${
+                      showSharePopover 
+                        ? "bg-blue-50 border-blue-200 text-blue-600" 
+                        : "hover:bg-slate-50 border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700"
+                    }`}
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+
+                  {/* Share Popover Dropdown menu */}
+                  {showSharePopover && (
+                    <div id="share-popover-menu" className="absolute right-0 bottom-full mb-2 z-50 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl p-2.5 space-y-1.5 animate-scale-up text-left">
+                      <div className="px-2 py-1 border-b border-slate-100 mb-1.5">
+                        <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-bold">Compartir pixel</span>
+                      </div>
+                      
+                      {/* Share on X (Twitter) option */}
+                      <button
+                        onClick={() => {
+                          const text = selectedPixelDetails
+                            ? `¡Mira este pixel pintado por ${selectedPixelDetails.ownerUsername || 'un pintor'} en x:${selectedPixel.x}, y:${selectedPixel.y} en Wplace! 🎨🔥`
+                            : `¡El pixel x:${selectedPixel.x}, y:${selectedPixel.y} está libre en Wplace! Ven a pintarlo ahora 🎨🚀`;
+                          const url = window.location.href;
+                          const tweetUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+                          window.open(tweetUrl, "_blank", "noopener,noreferrer");
+                          setShowSharePopover(false);
+                          triggerBeep(480, "sine", 0.06);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-sans font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <svg className="w-3.5 h-3.5 fill-current text-slate-800" viewBox="0 0 24 24">
+                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                        </svg>
+                        Compartir en X
+                      </button>
+
+                      {/* Share on Telegram option */}
+                      <button
+                        onClick={() => {
+                          const text = selectedPixelDetails
+                            ? `¡Mira este pixel pintado por ${selectedPixelDetails.ownerUsername || 'un pintor'} en x:${selectedPixel.x}, y:${selectedPixel.y} en Wplace! 🎨🔥`
+                            : `¡El pixel x:${selectedPixel.x}, y:${selectedPixel.y} está libre en Wplace! Ven a pintarlo ahora 🎨🚀`;
+                          const url = window.location.href;
+                          const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+                          window.open(telegramUrl, "_blank", "noopener,noreferrer");
+                          setShowSharePopover(false);
+                          triggerBeep(480, "sine", 0.06);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-sans font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <svg className="w-3.5 h-3.5 text-[#0088cc] fill-current" viewBox="0 0 24 24">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.69-.52.36-1 .53-1.42.52-.47-.01-1.37-.26-2.03-.48-.82-.27-1.47-.42-1.42-.88.03-.24.35-.49.97-.74 3.79-1.65 6.32-2.73 7.59-3.25 3.61-1.48 4.36-1.74 4.85-1.75.11 0 .35.03.5.16.13.1.17.24.18.34.02.09.01.24 0 .32z" />
+                        </svg>
+                        Compartir en Telegram
+                      </button>
+
+                      {/* Copy Link option */}
+                      <button
+                        onClick={() => {
+                          const shareUrl = window.location.href;
+                          navigator.clipboard.writeText(shareUrl).then(() => {
+                            setCopiedLink(true);
+                            triggerBeep(659.25, "sine", 0.05);
+                            setTimeout(() => {
+                              setCopiedLink(false);
+                              setShowSharePopover(false);
+                            }, 1500);
+                          });
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-50 text-slate-755 font-sans font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        {copiedLink ? (
+                          <span className="text-emerald-600 flex items-center gap-2">
+                            <Check className="w-3.5 h-3.5" />
+                            ¡Copiado!
+                          </span>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v6.75c0 .621.504 1.125 1.125 1.125H6.75a9.06 9.06 0 011.5.124m7.5 0a9.06 9.06 0 011.5-.124" />
+                            </svg>
+                            Copiar Enlace
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <button className="p-1.5 rounded-full hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-400 hover:text-slate-700 transition-all cursor-pointer">
                   <MoreVertical className="w-4 h-4" />
                 </button>
@@ -1397,7 +1586,7 @@ export default function CanvasBoard({
 
             {/* Color grid horizontal container (Beautifully styled round color pills matching Image 2) */}
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1.5 px-0.5 justify-start max-w-full">
-              {PALETTE.map((color) => {
+              {customPalette.map((color) => {
                 const isSelected = selectedColor === color;
                 const isEraser = color === "transparent";
 
@@ -1440,17 +1629,63 @@ export default function CanvasBoard({
 
             {/* Bottom button controls row */}
             <div className="flex items-center justify-between gap-3 mt-1">
-              {/* Left selector */}
-              <button 
-                onClick={() => {
-                  setDirectPaintMode(!directPaintMode);
-                  triggerBeep(392, "sine", 0.05);
-                }}
-                className={`w-9 h-9 flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 rounded-full transition-all cursor-pointer shadow-sm text-slate-600 ${directPaintMode ? 'bg-amber-100 border-amber-300' : ''}`}
-                title="Siguiente pixel directo"
-              >
-                <ChevronsUpDown className="w-4 h-4 text-slate-600" />
-              </button>
+              {/* Left selector - Extended Palette Color Picker */}
+              <div className="relative">
+                <button 
+                  onClick={() => {
+                    setShowExtendedColors(!showExtendedColors);
+                    triggerBeep(392, "sine", 0.05);
+                  }}
+                  className={`w-9 h-9 flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 rounded-full transition-all cursor-pointer shadow-sm text-slate-600 ${showExtendedColors ? 'bg-indigo-50 border-indigo-300 text-indigo-600 ring-2 ring-indigo-200' : ''}`}
+                  title="Paleta de colores extendida"
+                >
+                  <Palette className="w-4 h-4" />
+                </button>
+
+                {/* Extended Color Palette Popover Grid */}
+                {showExtendedColors && (
+                  <div className="absolute left-0 bottom-full mb-2.5 z-55 w-[250px] bg-white border border-slate-200 rounded-2xl p-3 shadow-xl animate-scale-up text-left">
+                    <div className="px-1 pb-1.5 mb-2 border-b border-slate-100 flex items-center justify-between">
+                      <span className="text-[10px] font-sans font-black text-slate-400 uppercase tracking-widest leading-none">
+                        Gama Extendida (40 colores)
+                      </span>
+                      <button 
+                        onClick={() => setShowExtendedColors(false)}
+                        className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="Cerrar"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-8 gap-1.5 max-h-48 overflow-y-auto scrollbar-none py-0.5">
+                      {EXTENDED_COLORS.map((colorHex, idx) => {
+                        const isAlreadySelected = selectedColor === colorHex;
+                        return (
+                          <button
+                            key={`${colorHex}-${idx}`}
+                            onClick={() => handleSelectExtendedColor(colorHex)}
+                            className={`w-5.5 h-5.5 rounded-full border relative transition-all hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center shrink-0 ${
+                              isAlreadySelected 
+                                ? "border-slate-850 ring-2 ring-indigo-400/50 scale-105" 
+                                : "border-slate-200 hover:border-slate-400"
+                            }`}
+                            style={{ backgroundColor: colorHex }}
+                            title={colorHex}
+                          >
+                            {isAlreadySelected && (
+                              <div className="w-1.5 h-1.5 rounded-full bg-white shadow-sm" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 text-[9px] text-slate-400 font-sans italic text-center">
+                      Se colocará después de la goma de borrar.
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Center Pintar button (Image 2 style) */}
               <button
@@ -1466,7 +1701,7 @@ export default function CanvasBoard({
                 ) : (
                   <>
                     <Paintbrush className="w-4 h-4" />
-                    Pintar {stagedCount > 0 ? stagedCount : 1}/{maxCharges} {charges < maxCharges && `(0:${secondsLeft < 10 ? "0" : ""}${secondsLeft})`}
+                    Pintar {stagedCount > 0 ? stagedCount : 1} px ({charges}/{maxCharges}) {charges < maxCharges && `(0:${secondsLeft < 10 ? "0" : ""}${secondsLeft})`}
                   </>
                 )}
               </button>
