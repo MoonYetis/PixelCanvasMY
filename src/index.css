@@ -30,3 +30,12 @@
     linear-gradient(to bottom, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
 }
 
+/* Enforce crisp pixel-art scaling across modern browsers */
+.crisp-canvas {
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+

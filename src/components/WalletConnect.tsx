@@ -39,8 +39,8 @@ export default function WalletConnect({
         // Request accounts
         const accounts = await win.unisat.requestAccounts();
         if (accounts && accounts.length > 0) {
-          // Check for taproot address
-          const taprootAddr = accounts.find((acc: string) => acc.startsWith("bc1p"));
+          // Check for taproot or segwit address
+          const taprootAddr = accounts.find((acc: string) => acc.startsWith("bc1p") || acc.startsWith("bc1q"));
           if (taprootAddr) {
             onAddressChange(taprootAddr);
           } else {
@@ -69,8 +69,8 @@ export default function WalletConnect({
 
   const handleCustomSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!inputAddress.startsWith("bc1p")) {
-      alert("Error: Only Taproot (bc1p...) addresses are supported on Fractal Bitcoin.");
+    if (!inputAddress.startsWith("bc1p") && !inputAddress.startsWith("bc1q")) {
+      alert("Error: Only Taproot (bc1p...) and Segwit (bc1q...) addresses are supported on Fractal Bitcoin.");
       return;
     }
     onAddressChange(inputAddress.trim());
@@ -125,7 +125,7 @@ export default function WalletConnect({
       {!currentAddress ? (
         <div className="space-y-4">
           <p className="text-sm text-gray-400 leading-relaxed">
-            Connect your Fractal address to buy and place pixels. The canvas supports standard Taproot (<code className="text-purple-400 font-mono">bc1p...</code>) addresses.
+            Connect your Fractal address to buy and place pixels. The canvas supports standard Taproot (<code className="text-purple-400 font-mono">bc1p...</code>) and Segwit (<code className="text-purple-400 font-mono">bc1q...</code>) addresses.
           </p>
 
           <div className="flex flex-col gap-2">
@@ -158,7 +158,7 @@ export default function WalletConnect({
 
           <form onSubmit={handleCustomSubmit} className="pt-3 border-t border-gray-800/50">
             <label className="block text-xs font-mono text-gray-400 mb-1.5 uppercase tracking-wider">
-              Or Paste an Existing Taproot Address
+              Or Paste an Existing Fractal Address (bc1p/bc1q)
             </label>
             <div className="flex gap-2">
               <input

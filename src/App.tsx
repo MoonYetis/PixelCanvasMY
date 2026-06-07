@@ -1,7 +1,9 @@
 import React, { useState, useEffect, FormEvent } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { PixelData, UserProfile, PaintTransaction, BlockchainBlock } from "./types";
 import CanvasBoard from "./components/CanvasBoard";
 import GoogleSignInPopup from "./components/GoogleSignInPopup";
+import { CheckoutPanel } from "./components/CheckoutPanel";
 import { 
   Flame, 
   Terminal as TerminalIcon, 
@@ -40,6 +42,64 @@ import {
   ArrowDown,
   Plus
 } from "lucide-react";
+
+// Determine frontend tier system benefits and badges based on real or simulated $MY holdings
+export const getUserTierAndDiscount = (myBalance: number) => {
+  if (myBalance >= 500000000) {
+    return {
+      name: "Cosmonaut",
+      discountPercent: 25,
+      badge: "💎 Cosmonaut VIP",
+      min: 500000000,
+      next: 0,
+      perks: "Lienzo 100x100, Merch VIP, Soporte prioritario, 25% de descuento en FB"
+    };
+  } else if (myBalance >= 100000000) {
+    return {
+      name: "Astronaut",
+      discountPercent: 20,
+      badge: "🚀 Astronaut Premium",
+      min: 100000000,
+      next: 500000000,
+      perks: "Lienzo privado 50x50, Badge premium de perfil, 20% de descuento en FB"
+    };
+  } else if (myBalance >= 50000000) {
+    return {
+      name: "Pioneer",
+      discountPercent: 15,
+      badge: "🎖️ Pioneer",
+      min: 50000000,
+      next: 100000000,
+      perks: "Lienzo privado 10x10, Votaciones de gobernanza, 15% de descuento en FB"
+    };
+  } else if (myBalance >= 10000000) {
+    return {
+      name: "Voyager",
+      discountPercent: 10,
+      badge: "🛸 Voyager",
+      min: 10000000,
+      next: 50000000,
+      perks: "Early access features, +50 píxeles por día, 10% de descuento en FB"
+    };
+  } else if (myBalance >= 1000000) {
+    return {
+      name: "Explorer",
+      discountPercent: 5,
+      badge: "🏕️ Explorer",
+      min: 1000000,
+      next: 10000000,
+      perks: "Badge básico, Canal privado de Discord, 5% de descuento en FB"
+    };
+  }
+  return {
+    name: "Básico",
+    discountPercent: 0,
+    badge: "🎨 Artista Básico",
+    min: 0,
+    next: 1000000,
+    perks: "Acceso estándar libre al lienzo colaborativo"
+  };
+};
 
 // Curated flags selection list
 const AVAILABLE_FLAGS = [
@@ -139,6 +199,100 @@ export default function App() {
   // DEX Swap Interface State (Uniswap styles)
   const [swapPayToken, setSwapPayToken] = useState<"FB" | "MOONYETIS">("FB");
   const [swapPayAmount, setSwapPayAmount] = useState<string>("0.5");
+
+  // Immersive non-blocking Custom Toasts / Notification feeds
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" | "warning"; key: number } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
+    setToast({ message, type, key: Date.now() });
+  };
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => {
+        setToast(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  // Client-side visual exchange rate calculator
+  const calculateExchangePX = (token: "FB" | "MOONYETIS", amount: number) => {
+    if (isNaN(amount) || amount <= 0) {
+      return { pxAmount: 0, rate: token === "FB" ? 100 : 0.20, nextTierDiff: 0, bonusPercent: 0, label: "Básico" };
+    }
+
+    if (token === "FB") {
+      if (amount < 0.5) {
+        return {
+          pxAmount: Math.floor(amount * 100),
+          rate: 100,
+          nextTierDiff: parseFloat((0.5 - amount).toFixed(2)),
+          bonusPercent: 0,
+          label: "Básico"
+        };
+      } else if (amount >= 0.5 && amount < 1.0) {
+        return {
+          pxAmount: Math.floor(amount * 110),
+          rate: 110,
+          nextTierDiff: parseFloat((1.0 - amount).toFixed(2)),
+          bonusPercent: 10,
+          label: "Estándar"
+        };
+      } else if (amount >= 1.0 && amount < 5.0) {
+        return {
+          pxAmount: Math.floor(amount * 125),
+          rate: 125,
+          nextTierDiff: parseFloat((5.0 - amount).toFixed(2)),
+          bonusPercent: 25,
+          label: "Premium Bulk"
+        };
+      } else {
+        return {
+          pxAmount: Math.floor(amount * 150),
+          rate: 150,
+          nextTierDiff: 0,
+          bonusPercent: 50,
+          label: "Whale Bulk"
+        };
+      }
+    } else {
+      // MOONYETIS (MY)
+      if (amount < 250) {
+        return {
+          pxAmount: Math.floor(amount * 0.20),
+          rate: 0.20,
+          nextTierDiff: 250 - amount,
+          bonusPercent: 0,
+          label: "Básico"
+        };
+      } else if (amount >= 250 && amount < 500) {
+        return {
+          pxAmount: Math.floor(amount * 0.22),
+          rate: 0.22,
+          nextTierDiff: 500 - amount,
+          bonusPercent: 10,
+          label: "Estándar"
+        };
+      } else if (amount >= 500 && amount < 2000) {
+        return {
+          pxAmount: Math.floor(amount * 0.25),
+          rate: 0.25,
+          nextTierDiff: 2000 - amount,
+          bonusPercent: 25,
+          label: "Premium Bulk"
+        };
+      } else {
+        return {
+          pxAmount: Math.floor(amount * 0.30),
+          rate: 0.30,
+          nextTierDiff: 0,
+          bonusPercent: 50,
+          label: "Whale Bulk"
+        };
+      }
+    }
+  };
 
   // Modals layout
   const [showProfileSelector, setShowProfileSelector] = useState(false);
@@ -362,7 +516,7 @@ export default function App() {
 
   const triggerTokenSwap = async (fromCurrency: "FB" | "MOONYETIS", fromAmount: number, pxAmount: number) => {
     if (!address || !profile) {
-      alert("Please connect the painter wallet first.");
+      showToast("Por favor conecta tu billetera primero para realizar transacciones.", "warning");
       return;
     }
     setIsSwapping(true);
@@ -373,20 +527,26 @@ export default function App() {
         body: JSON.stringify({
           address,
           fromCurrency,
-          fromAmount,
-          pxAmount
+          fromAmount
         })
       });
       const result = await response.json();
       if (!response.ok) {
-        alert(result.error || "Token swap transaction failed.");
+        showToast(result.error || "La transacción de intercambio falló.", "error");
+        triggerTone(220, "sawtooth", 0.15);
         return;
       }
-      alert(result.message || "Swap transaction committed and confirmed on-chain!");
+      showToast(result.message || "¡Intercambio realizado y confirmado en la red!", "success");
+      
+      // Sweet triple ascending chime for visual reward!
+      triggerTone(523.25, "sine", 0.08);
+      setTimeout(() => triggerTone(659.25, "sine", 0.08), 80);
+      setTimeout(() => triggerTone(783.99, "sine", 0.12), 16);
+
       await fetchUserProfile();
     } catch (err: any) {
       console.error(err);
-      alert(err?.message || "Exchange connection failed.");
+      showToast(err?.message || "Error al conectar con la pasarela de intercambio.", "error");
     } finally {
       setIsSwapping(false);
     }
@@ -590,6 +750,40 @@ export default function App() {
   return (
     <div className="absolute inset-0 w-full h-full bg-[#f8fafc] text-slate-800 font-sans flex flex-col overflow-hidden select-none">
       
+      {/* Immersive Sandbox Custom Toasts Feed */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none w-full max-w-md px-4">
+        <AnimatePresence mode="pop-layout">
+          {toast && (
+            <motion.div
+              key={toast.key}
+              initial={{ opacity: 0, y: -40, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              transition={{ type: "spring", damping: 18, stiffness: 120 }}
+              className={`pointer-events-auto w-full rounded-xl shadow-2xl border p-4 flex gap-3 text-slate-800 backdrop-blur-xl ${
+                toast.type === "success" 
+                  ? "border-emerald-500/30 bg-emerald-950/95 text-emerald-100 shadow-emerald-950/20" 
+                  : toast.type === "error" 
+                  ? "border-rose-500/30 bg-rose-950/95 text-rose-100 shadow-rose-950/20" 
+                  : toast.type === "warning"
+                  ? "border-amber-500/35 bg-amber-950/95 text-amber-100 shadow-amber-950/20"
+                  : "border-slate-800 bg-slate-900/95 text-slate-100 shadow-slate-950/20"
+              }`}
+            >
+              <div className="flex-1 text-xs leading-relaxed font-sans font-medium whitespace-pre-wrap">
+                {toast.message}
+              </div>
+              <button
+                onClick={() => setToast(null)}
+                className="self-start text-xs font-bold leading-none select-none hover:opacity-80 active:opacity-60 cursor-pointer p-0.5 rounded-full"
+              >
+                <X className="w-3.5 h-3.5 opacity-60 hover:opacity-100" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      
       {/* 1. IMMERSIVE CANVAS CONTAINER (Spans the complete screen view!) */}
       <div className="absolute inset-0 w-full h-full z-0 flex flex-col justify-end">
         <CanvasBoard
@@ -684,6 +878,17 @@ export default function App() {
                       <span className="text-[9px] font-mono text-slate-450 block truncate max-w-[150px] mt-0.5">
                         {address}
                       </span>
+                      {(() => {
+                        const tierResult = getUserTierAndDiscount(profile?.mooneyetis_balance || 0);
+                        return (
+                          <div className="flex items-center gap-1 mt-1.5">
+                            <span className="text-[8.5px] font-bold text-indigo-700 bg-indigo-50/80 border border-indigo-100/60 rounded px-1.5 py-0.5 shadow-3xs flex items-center gap-1 select-none whitespace-nowrap">
+                              <Sparkles className="w-2.5 h-2.5 text-indigo-500 shrink-0 animate-pulse" />
+                              Hold: {tierResult.badge}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                   <button
@@ -948,194 +1153,341 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Swapper segment in the Store directly! */}
+                {/* Advanced Gamified FX Swapper segment in the Store */}
                 {(() => {
+                  const myBalance = profile?.mooneyetis_balance ?? 1250;
+                  const myTierInfo = getUserTierAndDiscount(myBalance);
+
                   const currentPayBalance = swapPayToken === "FB" 
                     ? (profile?.fb_balance ?? 2.5) 
                     : (profile?.mooneyetis_balance ?? 1250);
 
-                  const parsedPayAmount = parseFloat(swapPayAmount);
+                  const parsedPayAmount = parseFloat(swapPayAmount) || 0;
                   const isAmountValid = !isNaN(parsedPayAmount) && parsedPayAmount > 0;
 
-                  const swapReceiveAmount = (() => {
-                    if (!isAmountValid) return 0;
-                    if (swapPayToken === "FB") {
-                      // 1 FB = 100 PX, but if payAmount >= 1.0, 1.0 FB = 120 PX (bulk bonus!)
-                      return parsedPayAmount >= 1.0 ? Math.floor(parsedPayAmount * 120) : Math.floor(parsedPayAmount * 100);
-                    } else {
-                      // 250 MY = 50 PX (0.2x), 500 MY = 120 PX (0.24x)
-                      return parsedPayAmount >= 500 ? Math.floor(parsedPayAmount * 0.24) : Math.floor(parsedPayAmount * 0.20);
-                    }
-                  })();
+                  // Apply BRC-20 holdings discount factor for FB swaps
+                  const activeDiscountPercent = swapPayToken === "FB" ? myTierInfo.discountPercent : 0;
+                  const discountFactor = (1 - activeDiscountPercent / 100);
+                  const discountedCost = parsedPayAmount * discountFactor;
 
-                  const activeRateText = swapPayToken === "FB"
-                    ? `1 FB = ${parsedPayAmount >= 1.0 ? "120" : "100"} PX`
-                    : `1 MY = ${parsedPayAmount >= 500 ? "0.24" : "0.20"} PX`;
+                  const calcResult = calculateExchangePX(swapPayToken, parsedPayAmount);
+                  const swapReceiveAmount = calcResult.pxAmount;
+                  const activeRateValue = calcResult.rate;
+                  const rateAppliedText = swapPayToken === "FB" 
+                    ? `1 FB = ${activeRateValue} PX`
+                    : `1 MY = ${activeRateValue} PX`;
 
-                  const swapBtnDisabled = !address || isSwapping || !isAmountValid || parsedPayAmount > currentPayBalance;
+                  const swapBtnDisabled = !address || isSwapping || !isAmountValid || (swapPayToken === "FB" ? discountedCost > currentPayBalance : parsedPayAmount > currentPayBalance);
+
+                  // Define preset values
+                  const fbPresets = ["0.1", "0.5", "1.0", "5.0"];
+                  const myPresets = ["100", "250", "500", "2000"];
+                  const activePresets = swapPayToken === "FB" ? fbPresets : myPresets;
+
+                  // Tiers lists to render
+                  const fbTiers = [
+                    { min: 0, max: 0.5, rate: 100, label: "Básico", bonus: "0%" },
+                    { min: 0.5, max: 1.0, rate: 110, label: "Estándar", bonus: "+10%" },
+                    { min: 1.0, max: 5.0, rate: 125, label: "Premium Bulk", bonus: "+25%" },
+                    { min: 5.0, max: Infinity, rate: 150, label: "Whale Bulk", bonus: "+50%" }
+                  ];
+
+                  const myTiers = [
+                    { min: 0, max: 250, rate: 0.20, label: "Básico", bonus: "0%" },
+                    { min: 250, max: 500, rate: 0.22, label: "Estándar", bonus: "+10%" },
+                    { min: 500, max: 2000, rate: 0.25, label: "Premium Bulk", bonus: "+25%" },
+                    { min: 2000, max: Infinity, rate: 0.30, label: "Whale Bulk", bonus: "+50%" }
+                  ];
+
+                  const activeTiers = swapPayToken === "FB" ? fbTiers : myTiers;
 
                   return (
-                    <div className="bg-[#12131a] text-slate-100 border border-slate-800 rounded-3xl p-4 space-y-3.5 relative overflow-hidden shadow-xl shadow-purple-950/20">
-                      {/* Tabs bar */}
-                      <div className="flex items-center justify-between border-b border-slate-850/80 pb-2">
-                        <div className="flex gap-4">
-                          <span className="text-xs font-sans font-black text-[#f5a623] border-b-2 border-[#f5a623] pb-1 cursor-pointer">
-                            Swap
-                          </span>
-                        </div>
-                        <div className="flex gap-2 text-slate-400">
-                          <button 
+                    <div className="bg-[#0f111a] text-slate-105 border border-slate-800 rounded-3xl p-4.5 space-y-4 relative overflow-hidden shadow-2xl">
+                      {/* Decorative background gradient */}
+                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-950/20 via-transparent to-transparent pointer-events-none" />
+
+                      {/* Token Selector Tabs */}
+                      <div className="relative z-10 flex border-b border-slate-800/80 pb-2.5 justify-between items-center">
+                        <div className="flex gap-1 bg-[#1a1b26] p-1 rounded-xl border border-slate-800/60">
+                          <button
                             onClick={() => {
-                              setSwapPayAmount(swapPayToken === "FB" ? "0.5" : "250");
-                              triggerTone(440, "sine", 0.05);
+                              setSwapPayToken("FB");
+                              setSwapPayAmount("0.5");
+                              triggerTone(329.63, "triangle", 0.06);
                             }}
-                            className="p-1 hover:text-white rounded hover:bg-slate-800/50 transition-colors cursor-pointer"
-                            title="Restaurar valores predeterminados"
+                            className={`px-3 py-1 bg-transparent rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                              swapPayToken === "FB" 
+                                ? "bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-md shadow-orange-950/20"
+                                : "text-slate-400 hover:text-slate-200"
+                            }`}
                           >
-                            <Plus className="w-3.5 h-3.5 rotate-45" />
+                            $FB (Fractal)
                           </button>
-                          <button className="p-1 hover:text-white rounded hover:bg-slate-800/50 transition-colors cursor-pointer">
-                            <Settings className="w-3.5 h-3.5" />
+                          <button
+                            onClick={() => {
+                              setSwapPayToken("MOONYETIS");
+                              setSwapPayAmount("250");
+                              triggerTone(392.00, "triangle", 0.06);
+                            }}
+                            className={`px-3 py-1 bg-transparent rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                              swapPayToken === "MOONYETIS" 
+                                ? "bg-gradient-to-r from-purple-550 to-indigo-600 text-white shadow-md shadow-indigo-950/20"
+                                : "text-slate-400 hover:text-slate-205"
+                            }`}
+                          >
+                            🏔️ MoonYetis
                           </button>
+                        </div>
+
+                        <div className="text-[10px] text-indigo-300 font-bold bg-indigo-955/45 px-2.5 py-0.5 border border-indigo-800/40 rounded-full flex items-center gap-1 shadow-sm shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shrink-0" />
+                          <span>{myTierInfo.badge}</span>
                         </div>
                       </div>
 
-                      {/* BLOCK 1: You Pay */}
-                      <div className="bg-[#1b1c24] border border-slate-800/60 rounded-2xl p-3.5 space-y-2 relative">
-                        <div className="flex justify-between text-[11px] text-slate-400">
-                          <span className="font-medium">Tú Pagas (You Pay)</span>
-                          <span className="font-mono text-slate-400">
-                            Balance: <strong className="text-slate-200">{swapPayToken === "FB" ? currentPayBalance.toFixed(2) : currentPayBalance}</strong>
-                          </span>
-                        </div>
+                      {swapPayToken === "FB" ? (
+                        <CheckoutPanel
+                          address={address}
+                          profile={profile}
+                          onPaymentSuccess={() => {
+                            fetchUserProfile();
+                            showToast("¡Píxeles cargados con éxito tras confirmación!", "success");
+                          }}
+                        />
+                      ) : (
+                        <>
+                          {/* Input Balance section */}
+                          <div className="relative z-10 space-y-2">
+                            <div className="flex justify-between text-[11px] text-slate-400 font-sans px-0.5">
+                              <span>Monto para Cambiar</span>
+                              <span>
+                                Saldo disponible:{" "}
+                                <strong className="text-slate-200 font-mono">
+                                  {currentPayBalance.toLocaleString()} MY
+                                </strong>
+                              </span>
+                            </div>
 
-                        <div className="flex items-center justify-between gap-3">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={swapPayAmount}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
-                                setSwapPayAmount(val);
-                              }
-                            }}
-                            placeholder="0.0"
-                            className="bg-transparent text-slate-100 text-2xl font-mono font-bold focus:outline-none w-1/2"
-                          />
+                            <div className="bg-[#161722] border border-slate-800/80 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-inner">
+                              <div className="w-2/3">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={swapPayAmount}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                                      setSwapPayAmount(val);
+                                    }
+                                  }}
+                                  placeholder="0.0"
+                                  className="bg-transparent text-slate-100 text-xl font-mono font-black focus:outline-none w-full"
+                                />
+                                <div className="text-slate-400 text-[10px] block mt-0.5 font-sans">
+                                  Equivale a un canje instantáneo
+                                </div>
+                              </div>
 
-                          {/* Token Selector Button */}
-                          <div className="relative shrink-0">
-                            <div className="flex bg-[#23242f] hover:bg-[#2d2e3d] border border-slate-800 rounded-2xl p-1.5 px-3 items-center gap-2 cursor-pointer select-none transition-all"
-                              onClick={() => {
-                                const nextToken = swapPayToken === "FB" ? "MOONYETIS" : "FB";
-                                setSwapPayToken(nextToken);
-                                setSwapPayAmount(nextToken === "FB" ? "0.5" : "250");
-                                triggerTone(329.63, "triangle", 0.06);
-                              }}
-                            >
-                              {swapPayToken === "FB" ? (
-                                <>
-                                  <div className="w-5 h-5 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 flex items-center justify-center text-[9px] font-black text-white shrink-0 border border-amber-300/30 shadow-md">
-                                    FB
-                                  </div>
-                                  <span className="text-xs font-black tracking-wide text-slate-100">Fractal BTC</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="text-base leading-none shrink-0" title="MoonYeti">🏔️</span>
-                                  <span className="text-xs font-black tracking-wide text-slate-100">MoonYeti</span>
-                                </>
-                              )}
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-400 rotate-90" />
+                              <div className="shrink-0 flex flex-col items-end gap-1.5 select-none font-sans">
+                                <div className="flex bg-[#1f202e] border border-slate-800 rounded-xl px-2.5 py-1 items-center gap-1.5 shadow-sm text-[11px] font-black">
+                                  <span className="text-xs font-bold text-indigo-400">🏔️ Yetis (MY)</span>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </div>
 
-                      {/* DOWN ARROW */}
-                      <div className="flex justify-center -my-6 relative z-10">
-                        <button 
-                          onClick={() => {
-                            triggerTone(587.33, "triangle", 0.05);
-                          }}
-                          className="w-8 h-8 rounded-full bg-[#f5a623] hover:scale-105 active:scale-95 border-4 border-[#12131a] flex items-center justify-center text-[#12131a] shadow-lg transition-transform cursor-pointer"
-                        >
-                          <ArrowDown className="w-4 h-4 stroke-[3]" />
-                        </button>
-                      </div>
-
-                      {/* BLOCK 2: You Receive */}
-                      <div className="bg-[#1b1c24] border border-slate-800/60 rounded-2xl p-3.5 space-y-2 relative">
-                        <div className="flex justify-between text-[11px] text-slate-400">
-                          <span className="font-medium">Tú Recibes (You Receive)</span>
-                          <span className="font-mono text-slate-400">
-                            Balance: <strong className="text-purple-300">{profile ? (profile.pixel_tokens_balance ?? 150) : 150} PX</strong>
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-slate-200 text-2xl font-mono font-bold select-all">
-                            {swapReceiveAmount}
+                          {/* Interactive presets row */}
+                          <div className="relative z-10 grid grid-cols-5 gap-1.5">
+                            {activePresets.map((val) => (
+                              <button
+                                key={val}
+                                onClick={() => {
+                                  setSwapPayAmount(val);
+                                  triggerTone(293.66, "sine", 0.05);
+                                }}
+                                className={`py-1 text-[10px] bg-[#1a1b24] border border-slate-800 hover:border-slate-700 hover:bg-slate-800 text-slate-300 font-mono font-bold rounded-lg cursor-pointer text-center transition-all ${
+                                  swapPayAmount === val ? "bg-purple-950/40 border-purple-500 text-purple-300" : ""
+                                }`}
+                              >
+                                {val}
+                              </button>
+                            ))}
+                            <button
+                              onClick={() => {
+                                setSwapPayAmount(currentPayBalance.toString());
+                                triggerTone(440, "sine", 0.05);
+                              }}
+                              className={`py-1 text-[10px] bg-[#1a1b24] border border-slate-800 hover:border-slate-705 text-purple-305 font-mono font-black rounded-lg cursor-pointer text-center transition-all`}
+                            >
+                              MÁX
+                            </button>
                           </div>
 
-                          <div className="flex bg-[#23242f] border border-slate-800 rounded-2xl p-1.5 px-3 items-center gap-1.5 select-none shrink-0">
-                            <Coins className="w-4 h-4 text-purple-400 fill-purple-400/20" />
-                            <span className="text-xs font-black tracking-wide text-slate-100">Pixel Tokens</span>
+                          {/* Range / Slider input for seamless conversion feel! */}
+                          <div className="relative z-10 space-y-1">
+                            <div className="flex justify-between items-center text-[10px] text-slate-400">
+                              <span>Ajustar con Deslizador</span>
+                              <span className="font-mono text-[9px] text-[#f5a623]">
+                                {currentPayBalance > 0 ? ((parsedPayAmount / currentPayBalance) * 100).toFixed(0) : "0"}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max={currentPayBalance || 1}
+                              step="1"
+                              value={parsedPayAmount > currentPayBalance ? currentPayBalance : parsedPayAmount}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value);
+                                setSwapPayAmount(Math.floor(val).toString());
+                              }}
+                              className="w-full h-1 bg-[#161722] rounded-lg appearance-none cursor-pointer accent-purple-500 border border-slate-800"
+                            />
                           </div>
-                        </div>
-                      </div>
 
-                      {/* EXCHANGE DETAILS */}
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1 font-sans">
-                        <span className="flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Tipo de cambio (Exchange rate):
-                        </span>
-                        <strong className="text-slate-250 font-mono tracking-wide">
-                          {activeRateText}
-                        </strong>
-                      </div>
+                          {/* Animated Live Swap Pathway Schematic */}
+                          <div className="relative z-10 bg-[#141520] border border-slate-850 rounded-2xl p-2.5 flex flex-col gap-1.5 shadow-sm text-center">
+                            <span className="text-[8px] font-mono text-slate-400 uppercase tracking-widest block font-bold">Ruta de Intercambio (Router Path)</span>
+                            <div className="flex items-center justify-between gap-1 px-1 text-slate-300 font-mono font-bold text-[11px]">
+                              <div className="flex flex-col items-center">
+                                <span className="text-[8px] text-slate-400 font-sans font-medium">Pagas</span>
+                                <span className="text-indigo-400 text-xs">
+                                  {parsedPayAmount.toLocaleString()} MOONYETIS
+                                </span>
+                              </div>
+                              
+                              <div className="flex-1 flex flex-col items-center justify-center relative px-1">
+                                <div className="w-full flex items-center justify-between">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+                                  <div className="flex-1 h-0.5 border-t border-dashed border-purple-500/40 mx-1 relative">
+                                    <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 bg-[#0f111a] text-[8px] text-purple-400 font-sans px-1 uppercase font-black shrink-0 whitespace-nowrap">
+                                      Tasa: {activeRateValue}x
+                                    </span>
+                                  </div>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                                </div>
+                              </div>
 
-                      {/* Bulk Bonus Active Warning */}
-                      {((swapPayToken === "FB" && parsedPayAmount >= 1.0) || 
-                        (swapPayToken === "MOONYETIS" && parsedPayAmount >= 500)) && (
-                        <div className="bg-emerald-950/40 text-emerald-300 text-[10px] font-sans border border-emerald-900/40 rounded-lg p-2.5 flex items-center justify-between">
-                          <span className="font-semibold flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                            ¡Bono de volumen activado! (+20% PX)
-                          </span>
-                          <span className="font-mono text-[9px] bg-emerald-900/80 px-2 py-0.5 rounded font-black">20% BONUS</span>
-                        </div>
+                              <div className="flex flex-col items-center">
+                                <span className="text-[8px] text-slate-400 font-sans font-medium">Recibes</span>
+                                <span className="text-purple-400 font-black animate-pulse text-xs">
+                                  +{swapReceiveAmount.toLocaleString()} PX
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Explicit Interactive Holdings Tier benefits panel */}
+                          <div className="relative z-10 bg-indigo-950/20 border border-indigo-900/35 p-3 rounded-2xl text-[10px] space-y-1">
+                            <div className="flex justify-between items-center font-bold text-indigo-300">
+                              <span className="uppercase tracking-wider text-[8px] block font-mono">Holdings Benefit Status:</span>
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-900/50 text-[9px] text-indigo-200 border border-indigo-800/40">
+                                {myTierInfo.name}
+                              </span>
+                            </div>
+                            <p className="text-slate-300 leading-tight">
+                              <strong>Beneficios:</strong> {myTierInfo.perks}
+                            </p>
+                            <div className="text-slate-400 text-[9px] pt-0.5">
+                              💡 Tip: Sube al nivel <strong>Explorer</strong> con 1,000,000 $MY para activar tu primer descuento del 5%.
+                            </div>
+                          </div>
+
+                          {/* Rate Tiers List with indicators of current status */}
+                          <div className="relative z-10 border border-slate-800/80 bg-[#12131e]/50 p-2.5 rounded-2xl space-y-1.5">
+                            <div className="flex justify-between items-center border-b border-slate-800/60 pb-1">
+                              <span className="text-[9px] font-bold text-slate-400">Escala de Bonificaciones</span>
+                              <span className="text-[9px] font-mono text-[#f5a623]">{rateAppliedText}</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {activeTiers.map((tier) => {
+                                const isCurrent = parsedPayAmount >= tier.min && parsedPayAmount < tier.max;
+
+                                return (
+                                  <div
+                                    key={tier.label}
+                                    className={`p-1.5 rounded-lg border text-[10px] flex flex-col justify-between transition-all ${
+                                      isCurrent
+                                        ? "bg-purple-950/20 border-purple-500/60 shadow-md ring-1 ring-purple-500/20 text-slate-200"
+                                        : "bg-[#141520]/60 border-slate-850/65 text-slate-400"
+                                    }`}
+                                  >
+                                    <div className="flex justify-between items-center">
+                                      <span className={`font-black uppercase tracking-tight text-[9px] ${isCurrent ? "text-purple-300" : ""}`}>
+                                        {tier.label}
+                                      </span>
+                                      {isCurrent && (
+                                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" />
+                                      )}
+                                    </div>
+                                    <div className="flex justify-between items-center mt-0.5">
+                                      <span className="font-mono text-[8px]">
+                                        {tier.min === 0 ? "0" : tier.min}–{tier.max === Infinity ? "MÁX" : tier.max} MY
+                                      </span>
+                                      <span className={`px-1 rounded bg-[#171822] text-[8px] font-black font-mono ${isCurrent ? "text-purple-400 shadow-sm" : ""}`}>
+                                        {tier.bonus} PX
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Interactive dynamic tier progress message */}
+                            {(() => {
+                              const nextTier = activeTiers.find(t => t.min > parsedPayAmount);
+                              if (nextTier) {
+                                const diff = nextTier.min - parsedPayAmount;
+                                return (
+                                  <div className="text-[9px] text-purple-300 font-sans flex items-center justify-between mt-1 bg-purple-955/15 border border-purple-900/35 p-1.5 rounded-lg leading-tight">
+                                    <span className="flex items-center gap-1">
+                                      <Sparkles className="w-3 h-3 text-purple-400 shrink-0" />
+                                      ¡Consigue {diff.toLocaleString()} {swapPayToken} más para subir a {nextTier.label} ({nextTier.bonus})!
+                                    </span>
+                                  </div>
+                                );
+                              } else if (parsedPayAmount > 0) {
+                                return (
+                                  <div className="text-[9px] text-emerald-300 bg-emerald-950/20 border border-emerald-900/40 p-1.5 rounded-lg flex items-center gap-1 justify-center leading-none">
+                                    <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                                    ¡Tasa máxima Ballena desbloqueada (+50% PX)!
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+
+                          {/* MAIN TRANSACTION CONFIRMATION ACTUATOR */}
+                          <button
+                            disabled={swapBtnDisabled}
+                            onClick={() => {
+                              if (isAmountValid) {
+                                triggerTokenSwap(swapPayToken, parsedPayAmount, swapReceiveAmount);
+                              }
+                            }}
+                            className={`w-full py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer text-slate-900 bg-gradient-to-r from-amber-400 via-orange-400 to-[#f5a623] hover:from-amber-305 hover:to-orange-505 hover:scale-[1.01] active:scale-[0.98] ${
+                              swapBtnDisabled ? "opacity-30 cursor-not-allowed grayscale pointer-events-none" : ""
+                            }`}
+                          >
+                            {isSwapping ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-slate-800" />
+                                Procesando Intercambio...
+                              </>
+                            ) : parsedPayAmount > currentPayBalance ? (
+                              `Saldo Insuficiente de ${swapPayToken}`
+                            ) : !isAmountValid || parsedPayAmount <= 0 ? (
+                              "Ingresa un monto válido"
+                            ) : !address ? (
+                              "Conecta tu Billetera de Pintor"
+                            ) : (
+                              `Cambiar ${parsedPayAmount.toLocaleString()} ${swapPayToken} ➔ y Recibir ${swapReceiveAmount.toLocaleString()} PX`
+                            )}
+                          </button>
+                        </>
                       )}
-
-                      {/* MAIN CTA BUTTON */}
-                      <button
-                        disabled={swapBtnDisabled}
-                        onClick={() => {
-                          if (isAmountValid) {
-                            triggerTokenSwap(swapPayToken, parsedPayAmount, swapReceiveAmount);
-                          }
-                        }}
-                        className={`w-full py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer text-slate-900 bg-gradient-to-r from-amber-400 to-[#f5a623] hover:from-amber-300 hover:to-orange-500 active:scale-[0.98] ${
-                          swapBtnDisabled ? "opacity-40 cursor-not-allowed grayscale pointer-events-none" : ""
-                        }`}
-                      >
-                        {isSwapping ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-                            Procesando Intercambio...
-                          </>
-                        ) : parsedPayAmount > currentPayBalance ? (
-                          "Saldo Insuficiente de " + swapPayToken
-                        ) : !isAmountValid ? (
-                          "Ingresa un monto válido"
-                        ) : !address ? (
-                          "Conectar Billetera de Pintor"
-                        ) : (
-                          `Intercambiar por ${swapReceiveAmount} PX`
-                        )}
-                      </button>
                     </div>
                   );
                 })()}

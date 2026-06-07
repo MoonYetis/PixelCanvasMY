@@ -49,6 +49,135 @@ function deriveAddressFromEmail(email: string): string {
   return "bc1p" + fullHash;
 }
 
+// Check if address is a valid Taproot (bc1p) or SegWit/Legacy (bc1q) on Fractal Bitcoin
+function isValidAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return address.startsWith("bc1p") || address.startsWith("bc1q");
+}
+
+// Fetch user's real moonyetis BRC-20 token balance with exponential backoff retry logic (max 3 times)
+async function fetchMyBalanceWithRetry(address: string, retries = 3, delay = 500): Promise<number> {
+  const url = `https://open-api-fractal.unisat.io/v1/indexer/address/${address}/brc20/summary`;
+  const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Unisat OpenAPI error status: ${response.status}`);
+      }
+
+      const resJson = await response.json() as any;
+      if (resJson && resJson.code === 0 && Array.isArray(resJson.data)) {
+        // Look for the "moonyetis" BRC-20 ticker case-insensitively
+        const found = resJson.data.find(
+          (item: any) => item && typeof item.ticker === "string" && item.ticker.toLowerCase() === "moonyetis"
+        );
+        if (found) {
+          const balanceStr = found.overallBalance || found.availableBalance || "0";
+          const parsed = parseFloat(balanceStr);
+          return isNaN(parsed) ? 0 : parsed;
+        }
+      }
+      return 0; // Not holding MoonYetis, fallback safely
+    } catch (error: any) {
+      console.warn(`[Unisat API] Attempt ${attempt} failed for ${address}:`, error?.message || error);
+      if (attempt === retries) {
+        throw error; // Maximum attempts reached, fail upward to let caller handle gracefully
+      }
+      // Wait with exponential backoff delay
+      await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt - 1)));
+    }
+  }
+  return 0;
+}
+
+// Fetch user's real FB available balance with exponential backoff retry logic (max 3 times)
+async function fetchFbBalanceWithRetry(address: string, retries = 3, delay = 500): Promise<number> {
+  const url = `https://open-api-fractal.unisat.io/v1/indexer/address/${address}/available-balance`;
+  const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Unisat OpenAPI error status: ${response.status}`);
+      }
+
+      const resJson = await response.json() as any;
+      if (resJson && resJson.code === 0 && resJson.data) {
+        const confirmedSatoshi = resJson.data.confirmedSatoshi || resJson.data.availableBalance || 0;
+        const parsed = parseFloat(confirmedSatoshi);
+        return isNaN(parsed) ? 0 : parsed / 100000000;
+      }
+      return 0;
+    } catch (error: any) {
+      console.warn(`[Unisat FB API] Attempt ${attempt} failed for ${address}:`, error?.message || error);
+      if (attempt === retries) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt - 1)));
+    }
+  }
+  return 0;
+}
+
+// Determine server-side authoritative tiers and discount benefits based on MY balance
+function getUserTierAndDiscount(myBalance: number) {
+  if (myBalance >= 500000000) {
+    return { tier: "Cosmonaut", discountPercent: 25, badge: "💎 Cosmonaut VIP" };
+  } else if (myBalance >= 100000000) {
+    return { tier: "Astronaut", discountPercent: 20, badge: "🚀 Astronaut Premium" };
+  } else if (myBalance >= 50000000) {
+    return { tier: "Pioneer", discountPercent: 15, badge: "🎖️ Pioneer" };
+  } else if (myBalance >= 1000000) {
+    return { tier: "Voyager", discountPercent: 10, badge: "🛸 Voyager" };
+  } else if (myBalance >= 1000000) {
+    // Actually Explorer: Let's adjust to match our defined list
+    // Explorer: 1,000,000 $MY to < 10,000,000 $MY
+    // Voyager: 10,000,000 $MY to < 50,000,000 $MY
+    // Pioneer: 50,000,000 $MY to < 100,000,000 $MY
+    // Astronaut: 100,000,000 $MY to < 500,000,000 $MY
+    // Cosmonaut: >= 500,000,000 $MY
+    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
+  }
+  // Less than 1,000,000 $MY
+  if (myBalance >= 1000000) {
+    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
+  }
+  return { tier: "Básico", discountPercent: 0, badge: "🎨 Artista Básico" };
+}
+
+// Double check adjustment check
+function getUserTierAndDiscountAdjusted(myBalance: number) {
+  if (myBalance >= 500000000) {
+    return { tier: "Cosmonaut", discountPercent: 25, badge: "💎 Cosmonaut VIP" };
+  } else if (myBalance >= 100000000) {
+    return { tier: "Astronaut", discountPercent: 20, badge: "🚀 Astronaut Premium" };
+  } else if (myBalance >= 50000000) {
+    return { tier: "Pioneer", discountPercent: 15, badge: "🎖️ Pioneer" };
+  } else if (myBalance >= 10000000) {
+    return { tier: "Voyager", discountPercent: 10, badge: "🛸 Voyager" };
+  } else if (myBalance >= 1000000) {
+    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
+  }
+  return { tier: "Básico", discountPercent: 0, badge: "🎨 Artista Básico" };
+}
+
 // In-Memory state loaded from / saved to disk
 let pixelsRecord: Record<string, PixelData> = loadJSON(FILE_PIXELS, {});
 let usersRecord: Record<string, UserProfile> = loadJSON(FILE_USERS, {});
@@ -281,7 +410,8 @@ setInterval(() => {
 // Instantiate app
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // API - Get Canvas state (non-blank painted coordinates)
   app.get("/api/canvas", (req, res) => {
@@ -340,7 +470,7 @@ async function startServer() {
     // 1. If currently connected to a valid wallet address, link Google account to that address!
     // 2. Otherwise/fallback: use deterministic address derived from client Google email.
     let targetAddress = currentAddress;
-    if (!targetAddress || !targetAddress.startsWith("bc1p")) {
+    if (!targetAddress || !isValidAddress(targetAddress)) {
       // Find if there is an existing user record with this google_email first!
       const existingUser = Object.values(usersRecord).find(
         (u) => u.google_email?.toLowerCase() === email.toLowerCase()
@@ -367,42 +497,67 @@ async function startServer() {
         avatar_url: avatarUrl,
       };
       saveJSON(FILE_USERS, usersRecord);
-    } else {
-      // User already exists; complete Google details
-      usersRecord[targetAddress].google_email = email;
-      if (name && !usersRecord[targetAddress].google_name) {
-        usersRecord[targetAddress].google_name = name;
-      }
-      if (avatarUrl && !usersRecord[targetAddress].avatar_url) {
-        usersRecord[targetAddress].avatar_url = avatarUrl;
-      }
-      saveJSON(FILE_USERS, usersRecord);
     }
 
     res.json({ success: true, profile: usersRecord[targetAddress] });
   });
 
-  // API - Fetch or create user profile based on Taproot address (bc1p...)
-  app.get("/api/users/profile/:address", (req, res) => {
+  // API - Fetch or create user profile based on connected Fractal address (bc1p... or bc1q...)
+  app.get("/api/users/profile/:address", async (req, res) => {
     const address = req.params.address;
-    if (!address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Only Taproot (bc1p...) addresses are supported on Fractal Bitcoin." });
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Only Taproot (bc1p...) and SegWit (bc1q...) addresses are supported on Fractal Bitcoin." });
+    }
+ 
+    // Try to load real BRC-20 token balance from UniSat Fractal Indexer dynamically
+    let realMyBalance = -1;
+    try {
+      realMyBalance = await fetchMyBalanceWithRetry(address, 3, 500);
+      console.log(`[UniSat Integration] Successfully fetched $MY balance of ${realMyBalance} for address: ${address}`);
+    } catch (err: any) {
+      console.warn(`[UniSat Integration] Bypassed or failed lookup for ${address}, keeping existing simulated balance. Error:`, err?.message || err);
     }
 
+    // Try to load real FB available-balance dynamically from UniSat Fractal Indexer
+    let realFbBalance = -1;
+    try {
+      realFbBalance = await fetchFbBalanceWithRetry(address, 3, 500);
+      console.log(`[UniSat Integration] Successfully fetched FB balance of ${realFbBalance} for address: ${address}`);
+    } catch (err: any) {
+      console.warn(`[UniSat Integration] Bypassed or failed FB lookup for ${address}, keeping existing simulated balance. Error:`, err?.message || err);
+    }
+ 
     if (!usersRecord[address]) {
       usersRecord[address] = {
         username: `Painter-${address.substring(4, 9)}`,
         address: address,
-        fb_balance: 5.5, // 5.5 FB starter balance for instant fun
-        mooneyetis_balance: 2500, // 2500 moon yetis tokens
-        pixel_tokens_balance: 150, // 150 Pixel Tokens starter balance
+        fb_balance: realFbBalance >= 0 ? realFbBalance : 5.0, // Use real balance, otherwise fallback to standard sim
+        mooneyetis_balance: realMyBalance >= 0 ? realMyBalance : 1250, // Use real balance, otherwise fallback to standard sim
+        pixel_tokens_balance: 200, 
         total_pixels_owned: 0,
-        flag_emoji: "🇺🇸", // default flag
+        flag_emoji: "🇺🇸", 
         created_at: Date.now()
       };
       saveJSON(FILE_USERS, usersRecord);
-    } else if (usersRecord[address].pixel_tokens_balance === undefined) {
-      usersRecord[address].pixel_tokens_balance = 150;
+    } else {
+      // If we got real balances from UniSat API, update our backend profile record authoritatively!
+      if (realMyBalance >= 0) {
+        usersRecord[address].mooneyetis_balance = realMyBalance;
+      }
+      if (realFbBalance >= 0) {
+        usersRecord[address].fb_balance = realFbBalance;
+      }
+      
+      // Dynamic auto-topup for existing user testers so they don't get blocked by low starting balances
+      if (usersRecord[address].pixel_tokens_balance === undefined || usersRecord[address].pixel_tokens_balance < 20) {
+        usersRecord[address].pixel_tokens_balance = 200;
+      }
+      if (usersRecord[address].fb_balance === undefined || (usersRecord[address].fb_balance < 1.0 && realFbBalance < 0)) {
+        usersRecord[address].fb_balance = 5.0;
+      }
+      if (usersRecord[address].mooneyetis_balance === undefined) {
+        usersRecord[address].mooneyetis_balance = realMyBalance >= 0 ? realMyBalance : 1250;
+      }
       saveJSON(FILE_USERS, usersRecord);
     }
     res.json(usersRecord[address]);
@@ -411,8 +566,8 @@ async function startServer() {
   // API - Update profile username and flag emoji
   app.post("/api/users/update", (req, res) => {
     const { address, username, flagEmoji } = req.body;
-    if (!address || !address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Invalid Taproot address." });
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Invalid Fractal wallet address." });
     }
     if (!usersRecord[address]) {
       return res.status(404).json({ error: "User profile not established." });
@@ -430,8 +585,8 @@ async function startServer() {
   // API - Sim Faucet to allow instant test tokens
   app.post("/api/wallet/sim-faucet", (req, res) => {
     const { address, type } = req.body;
-    if (!address || !address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Invalid Taproot address." });
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Invalid Fractal wallet address." });
     }
 
     if (!usersRecord[address]) {
@@ -461,45 +616,291 @@ async function startServer() {
     res.json({ success: true, profile: usersRecord[address] });
   });
 
-  // API - Exchange $FB or MOONYETIS into Pixel Tokens (PX)
+  // API - Exchange $FB or MOONYETIS into Pixel Tokens (PX) with advanced authoritative tier rules
   app.post("/api/wallet/exchange", (req, res) => {
-    const { address, fromCurrency, fromAmount, pxAmount } = req.body;
-    if (!address || !address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Invalid Taproot address." });
+    const { address, fromCurrency, fromAmount } = req.body;
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Invalid Fractal wallet address." });
     }
     const user = usersRecord[address];
     if (!user) {
       return res.status(404).json({ error: "User profile not established." });
     }
 
+    const parsedAmount = parseFloat(fromAmount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ error: "Por favor ingresa un monto válido mayor a 0." });
+    }
+
+    // Server-side authoritative exchange calculation
+    let calculatedPx = 0;
+    let rateApplied = 0;
+    let tierLabel = "Básico";
+
     if (fromCurrency === "FB") {
-      if (user.fb_balance < fromAmount) {
-        return res.status(400).json({ error: `Insufficient FB balance. Needed: ${fromAmount} FB, Have: ${user.fb_balance.toFixed(3)} FB` });
+      // Calculate tier and discount percentage based on real or simulated $MY holdings
+      const { tier, discountPercent, badge } = getUserTierAndDiscountAdjusted(user.mooneyetis_balance || 0);
+      const finalFbNeeded = parsedAmount * (1 - discountPercent / 100);
+
+      if (user.fb_balance < finalFbNeeded) {
+        return res.status(400).json({ error: `Saldo insuficiente de $FB. Con tu Tier ${tier} (${discountPercent}% de descuento), requieres ${finalFbNeeded.toFixed(4)} FB, pero tienes ${user.fb_balance.toFixed(4)} FB.` });
       }
-      user.fb_balance -= fromAmount;
+
+      user.fb_balance -= finalFbNeeded;
+
+      if (parsedAmount < 0.5) {
+        rateApplied = 100;
+        tierLabel = "Básico";
+      } else if (parsedAmount >= 0.5 && parsedAmount < 1.0) {
+        rateApplied = 110;
+        tierLabel = "Estándar (+10% Bonus)";
+      } else if (parsedAmount >= 1.0 && parsedAmount < 5.0) {
+        rateApplied = 125;
+        tierLabel = "Premium Bulk (+25% Bonus)";
+      } else {
+        rateApplied = 150;
+        tierLabel = "Whale Bulk (+50% Bonus)";
+      }
+      calculatedPx = Math.floor(parsedAmount * rateApplied);
+
+      if (user.pixel_tokens_balance === undefined) {
+        user.pixel_tokens_balance = 0;
+      }
+      user.pixel_tokens_balance += calculatedPx;
+
+      saveJSON(FILE_USERS, usersRecord);
+
+      const discountMsg = discountPercent > 0 
+        ? `\n\n🎁 ¡Beneficio de Tier ${tier} activado!\nSe aplicó un ${discountPercent}% de descuento. Pagaste solo ${finalFbNeeded.toFixed(4)} FB en vez de ${parsedAmount} FB.`
+        : `\n\n💡 Tip: Acumula tokens $MY en tu wallet para obtener descuentos de hasta un 25% en tus compras de FB.`;
+
+      return res.json({ 
+        success: true, 
+        profile: user, 
+        message: `¡Intercambio procesado con éxito!\n\nHas obtenido ${calculatedPx} Pixel Tokens (PX) con la tasa de ${tierLabel} (${rateApplied} PX por unidad).${discountMsg}` 
+      });
+
     } else if (fromCurrency === "MOONYETIS") {
-      if (user.mooneyetis_balance < fromAmount) {
-        return res.status(400).json({ error: `Insufficient MoonYeti balance. Needed: ${fromAmount} MY, Have: ${user.mooneyetis_balance} MY` });
+      if (user.mooneyetis_balance < parsedAmount) {
+        return res.status(400).json({ error: `Saldo insuficiente de MoonYetis (MY). Requieres ${parsedAmount} MY, tienes ${user.mooneyetis_balance} MY` });
       }
-      user.mooneyetis_balance -= fromAmount;
+      user.mooneyetis_balance -= parsedAmount;
+
+      if (parsedAmount < 250) {
+        rateApplied = 0.20;
+        tierLabel = "Básico";
+      } else if (parsedAmount >= 250 && parsedAmount < 500) {
+        rateApplied = 0.22;
+        tierLabel = "Estándar (+10% Bonus)";
+      } else if (parsedAmount >= 500 && parsedAmount < 2000) {
+        rateApplied = 0.25;
+        tierLabel = "Premium Bulk (+25% Bonus)";
+      } else {
+        rateApplied = 0.30;
+        tierLabel = "Whale Bulk (+50% Bonus)";
+      }
+      calculatedPx = Math.floor(parsedAmount * rateApplied);
+
+      if (user.pixel_tokens_balance === undefined) {
+        user.pixel_tokens_balance = 0;
+      }
+      user.pixel_tokens_balance += calculatedPx;
+
+      saveJSON(FILE_USERS, usersRecord);
+      return res.json({ 
+        success: true, 
+        profile: user, 
+        message: `¡Intercambio procesado con éxito!\n\nHas canjeado ${parsedAmount} MOONYETIS por ${calculatedPx} Pixel Tokens (PX) con la tasa de ${tierLabel} (${rateApplied} PX por unidad).` 
+      });
+
     } else {
       return res.status(400).json({ error: "Invalid source currency." });
     }
+  });
 
-    if (user.pixel_tokens_balance === undefined) {
-      user.pixel_tokens_balance = 0;
+  // API - Get Fractal Bitcoin (FB) available balance dynamically via Unisat proxy (Secures secret Bearer Token)
+  app.get("/api/wallet/fb-balance/:address", async (req, res) => {
+    const address = req.params.address;
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Invalid address." });
     }
-    user.pixel_tokens_balance += pxAmount;
 
-    saveJSON(FILE_USERS, usersRecord);
-    res.json({ success: true, profile: user, message: `Successfully swapped ${fromAmount} ${fromCurrency} for ${pxAmount} PX!` });
+    try {
+      const balance = await fetchFbBalanceWithRetry(address, 3, 500);
+      
+      // Update in local records if user exists
+      if (usersRecord[address]) {
+        usersRecord[address].fb_balance = balance;
+        saveJSON(FILE_USERS, usersRecord);
+      }
+      return res.json({ success: true, balance });
+    } catch (err: any) {
+      console.warn(`[FB Balance Fetch Error] Falling back to database for ${address}`);
+      const user = usersRecord[address];
+      return res.json({ 
+        success: true, 
+        balance: user ? (user.fb_balance ?? 5.0) : 5.0,
+        simulated: true 
+      });
+    }
+  });
+
+  // Keep track of credited transaction IDs on this server session to prevent double spending
+  const creditedTxids = new Set<string>();
+
+  // API - Real-time verifying payments & on-chain confirmations polling
+  app.post("/api/wallet/verify-and-credit", async (req, res) => {
+    const { txid, address, pixelsCount } = req.body;
+    if (!txid || !address || !pixelsCount) {
+      return res.status(400).json({ error: "Faltan parámetros de transacción: txid, address o pixelsCount es requerido." });
+    }
+
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Dirección de billetera Fractal inválida." });
+    }
+
+    const user = usersRecord[address];
+    if (!user) {
+      return res.status(404).json({ error: "Perfil de pintor no configurado." });
+    }
+
+    const count = parseInt(pixelsCount, 10);
+    if (isNaN(count) || count < 100 || count > 100000) {
+      return res.status(400).json({ error: "Cantidad de pixels inválida para acreditar." });
+    }
+
+    // CHECK DOUBLE SPEND
+    if (creditedTxids.has(txid)) {
+      return res.json({ success: true, status: "confirmed", confirmations: 1, message: "Esta transacción ya fue acreditada previamente." });
+    }
+
+    // 1. Check if simulated transaction
+    if (txid.startsWith("mock")) {
+      creditedTxids.add(txid);
+      
+      if (user.pixel_tokens_balance === undefined) {
+        user.pixel_tokens_balance = 0;
+      }
+      user.pixel_tokens_balance += count;
+
+      // Register painting swap transactions history trace
+      const mockPaintTx: PaintTransaction = {
+        txid,
+        address,
+        pixels: [], // empty for storefront bulk purchase
+        totalCost: count * 0.001, // approximate base cost
+        currency: "FB",
+        timestamp: Date.now(),
+        status: "confirmed",
+        confirmations: 1
+      };
+
+      txList.unshift(mockPaintTx);
+      if (txList.length > 50) {
+        txList.pop();
+      }
+
+      saveJSON(FILE_USERS, usersRecord);
+      saveJSON(FILE_TXS, txList);
+
+      return res.json({
+        success: true,
+        status: "confirmed",
+        confirmations: 1,
+        message: `¡Acreditación de prueba exitosa! Se han agregado +${count} Pixels.`
+      });
+    }
+
+    // 2. Real on-chain lookup via Unisat Indexer API
+    try {
+      const url = `https://open-api-fractal.unisat.io/v1/indexer/tx/${txid}`;
+      const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        // If tx is broadcasted but not yet visible on open-api indexer (highly expected in Bitcoin networks first few seconds)
+        console.log(`[UniSat On-Chain Polling] Transaction ${txid} not indexed yet. Status: ${response.status}`);
+        return res.json({
+          success: true,
+          status: "pending",
+          confirmations: 0,
+          message: "Transmisión en curso. Esperando que se incluya en un bloque."
+        });
+      }
+
+      const resJson = await response.json() as any;
+      if (resJson && resJson.code === 0 && resJson.data) {
+        const confirmations = resJson.data.confirmations || 0;
+        
+        if (confirmations >= 1) {
+          creditedTxids.add(txid);
+
+          if (user.pixel_tokens_balance === undefined) {
+            user.pixel_tokens_balance = 0;
+          }
+          user.pixel_tokens_balance += count;
+
+          // Register transaction history trace
+          const realPaintTx: PaintTransaction = {
+            txid,
+            address,
+            pixels: [],
+            totalCost: count * 0.001,
+            currency: "FB",
+            timestamp: Date.now(),
+            status: "confirmed",
+            confirmations
+          };
+
+          txList.unshift(realPaintTx);
+          if (txList.length > 50) {
+            txList.pop();
+          }
+
+          saveJSON(FILE_USERS, usersRecord);
+          saveJSON(FILE_TXS, txList);
+
+          return res.json({
+            success: true,
+            status: "confirmed",
+            confirmations,
+            message: `¡Pago on-chain confirmado con éxito! +${count} Pixels acreditados.`
+          });
+        } else {
+          return res.json({
+            success: true,
+            status: "pending",
+            confirmations,
+            message: "Transacción detectada en mempool. Esperando confirmación de red."
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        status: "pending",
+        confirmations: 0,
+        message: "Procesando en la red de Fractal Bitcoin."
+      });
+
+    } catch (err: any) {
+      console.error("[Verify and Credit Real Error]:", err);
+      return res.status(500).json({ error: "Error en verificación onchain: " + err.message });
+    }
   });
 
   // API - Deduct Pixel Tokens on upgrade item purchase
   app.post("/api/wallet/buy-item", (req, res) => {
     const { address, itemId, costPx } = req.body;
-    if (!address || !address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Invalid Taproot address." });
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Invalid Fractal wallet address." });
     }
     const user = usersRecord[address];
     if (!user) {
@@ -523,8 +924,8 @@ async function startServer() {
   app.post("/api/pixels/paint", (req, res) => {
     const { address, pixels, currency } = req.body; // pixels: {x, y, color}[]
 
-    if (!address || !address.startsWith("bc1p")) {
-      return res.status(400).json({ error: "Taproot bc1p address is required." });
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: "Fractal wallet address (bc1p/bc1q) is required." });
     }
     if (!pixels || !Array.isArray(pixels) || pixels.length === 0) {
       return res.status(400).json({ error: "No pixels specified." });
