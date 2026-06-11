@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { PixelData, UserProfile, PaintTransaction, BlockchainBlock } from "./src/types";
+import { SUBSCRIPTION_PLANS, TIERS, tierForBalance, planById } from "./shared/subscriptions-config";
 
 // Setup storage directories
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -152,20 +153,15 @@ async function fetchFbBalanceWithRetry(address: string, retries = 3, delay = 500
   return 0;
 }
 
-// Determine server-side authoritative tiers and discount benefits based on MY balance
+// Determine server-side authoritative tiers and discount benefits based on MY balance using shared config
 function getUserTierAndDiscount(myBalance: number) {
-  if (myBalance >= 500000000) {
-    return { tier: "Cosmonaut", discountPercent: 25, badge: "💎 Cosmonaut VIP" };
-  } else if (myBalance >= 100000000) {
-    return { tier: "Astronaut", discountPercent: 20, badge: "🚀 Astronaut Premium" };
-  } else if (myBalance >= 50000000) {
-    return { tier: "Pioneer", discountPercent: 15, badge: "🎖️ Pioneer" };
-  } else if (myBalance >= 10000000) {
-    return { tier: "Voyager", discountPercent: 10, badge: "🛸 Voyager" };
-  } else if (myBalance >= 1000000) {
-    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
-  }
-  return { tier: "Básico", discountPercent: 0, badge: "🎨 Artista Básico" };
+  const t = tierForBalance(myBalance);
+  const badgeSuffix = t.id === "cosmonaut" ? " VIP" : t.id === "astronaut" ? " Premium" : t.id === "basico" ? " Artista Básico" : "";
+  return { 
+    tier: t.name, 
+    discountPercent: t.discountPercent, 
+    badge: `${t.badge} ${t.name}${badgeSuffix}` 
+  };
 }
 
 // In-Memory state loaded from / saved to disk
@@ -555,9 +551,9 @@ async function startServer() {
     const userObj = usersRecord[address];
     if (userObj.subscription && userObj.subscription.expiresAt) {
       if (userObj.subscription.expiresAt > Date.now()) {
-        const plan = SUBS_PLANS.find(p => p.id === userObj.subscription.planId);
+        const plan = SUBSCRIPTION_PLANS.find(p => p.id === userObj.subscription.planId);
         if (plan) {
-          userObj.max_charges = plan.maxCharges;
+          userObj.max_charges = plan.chargesMax;
         }
       } else {
         if (userObj.max_charges === 500 || userObj.max_charges === 1000) {
@@ -1017,11 +1013,7 @@ async function startServer() {
     });
   });
 
-    // Dynamic on-chain validation with node JSON-RPC getrawtransaction API
-  const SUBS_PLANS = [
-    { id: "premium", name: "Premium Plan", priceFB: 0.1, maxCharges: 500, desc: "Aumenta la energía de 50 a 500 cargas continuas durante 30 días" },
-    { id: "pro", name: "Pro Painter Plan", priceFB: 0.2, maxCharges: 1000, desc: "Aumenta la energía de 50 a 1000 cargas continuas durante 30 días" }
-  ];
+    // Dynamic on-chain validation with node JSON-RPC getrawtransaction API; plans are now imported from subscriptions-config.ts
 
   // Node RPC tracking & circuit breaker state
   let nodeConsecutiveFailures = 0;
@@ -1160,9 +1152,12 @@ async function startServer() {
     }
   }
 
-  // SUB ENDPOINT 1: Get subscription plans
+  // SUB ENDPOINT 1: Get subscription plans and tiers
   app.get("/api/subscriptions/plans", (req, res) => {
-    res.json(SUBS_PLANS);
+    res.json({
+      plans: SUBSCRIPTION_PLANS,
+      tiers: TIERS,
+    });
   });
 
   // SUB ENDPOINT 2: Get subscription status
@@ -1189,16 +1184,22 @@ async function startServer() {
     if (!address || !planId || !txid) {
        return res.status(400).json({ error: "address, planId and txid are required." });
     }
-    const plan = SUBS_PLANS.find(p => p.id === planId);
+    const plan = SUBSCRIPTION_PLANS.find(p => p.id === planId);
     if (!plan) {
       return res.status(400).json({ error: "Invalid planId selector." });
     }
 
     try {
       console.log(`[Subscription Service] Validating subscription for ${address} via getrawtransaction on txid: ${txid}`);
+      
+      const myBalance = (usersRecord[address]?.mooneyetis_balance as number) ?? 0;
+      const tier = tierForBalance(myBalance);
+      const discount = tier.discountPercent;
+      const finalCost = plan.costFb * (1 - discount / 100);
+
       let onchainValid = false;
       try {
-        onchainValid = await validateTxOnChain(txid, plan.priceFB);
+        onchainValid = await validateTxOnChain(txid, finalCost);
       } catch (err: any) {
         if (err.status === 503 || err.message === "Node circuit broken") {
           return res.status(503).json({ error: "Service unavailable: Node circuit breaker active. Retry later." });
@@ -1224,7 +1225,7 @@ async function startServer() {
         };
       }
 
-      const durationMs = 30 * 24 * 3600 * 1000; 
+      const durationMs = (plan.durationHours || 30 * 24) * 3600 * 1000; 
       const expiresAt = Date.now() + durationMs;
 
       usersRecord[address].subscription = {
@@ -1234,11 +1235,11 @@ async function startServer() {
         subscribedAt: Date.now()
       };
 
-      usersRecord[address].max_charges = plan.maxCharges;
-      usersRecord[address].charges = plan.maxCharges;
+      usersRecord[address].max_charges = plan.chargesMax;
+      usersRecord[address].charges = plan.chargesMax;
 
       saveJSON(FILE_USERS, usersRecord);
-      return res.json({ success: true, expiresAt, maxCharges: plan.maxCharges });
+      return res.json({ success: true, expiresAt, maxCharges: plan.chargesMax });
     } catch (err: any) {
       console.error("[Subscription Service] Subscribe error:", err);
       return res.status(500).json({ error: err?.message || "Internal subscription error." });

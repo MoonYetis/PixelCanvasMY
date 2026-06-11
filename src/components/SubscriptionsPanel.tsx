@@ -14,14 +14,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import { requestFBPayment } from "../hooks/usePayment";
-
-interface SubscriptionPlan {
-  id: string;
-  name: string;
-  priceFB: number;
-  maxCharges: number;
-  desc: string;
-}
+import { SUBSCRIPTION_PLANS, TIERS, tierForBalance, type SubscriptionPlan, type Tier } from "../../shared/subscriptions-config";
 
 interface ActiveSubscription {
   active: boolean;
@@ -36,21 +29,12 @@ interface SubscriptionsPanelProps {
   onSubscriptionSuccess?: () => void;
 }
 
-function getTierDiscount(myBalance: number): number {
-  if (myBalance >= 500000000) return 25;
-  if (myBalance >= 100000000) return 20;
-  if (myBalance >= 50000000) return 15;
-  if (myBalance >= 10000000) return 10;
-  if (myBalance >= 100000) return 5; // Explorer: >= 1,000,000 $MY
-  return 0;
-}
-
 export default function SubscriptionsPanel({
   address,
   userProfile,
   onSubscriptionSuccess
 }: SubscriptionsPanelProps) {
-  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>(SUBSCRIPTION_PLANS);
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [status, setStatus] = useState<ActiveSubscription>({
     active: false,
@@ -69,7 +53,8 @@ export default function SubscriptionsPanel({
 
   // Get active user discount based on Moonyetis token indexer balance
   const userMyBalance = userProfile?.mooneyetis_balance || 0;
-  const discountPercent = getTierDiscount(userMyBalance);
+  const userTier = tierForBalance(userMyBalance);
+  const discountPercent = userTier.discountPercent;
 
   // Fetch plans and subscription status
   const fetchPlansAndStatus = async () => {
@@ -81,7 +66,7 @@ export default function SubscriptionsPanel({
       const plansRes = await fetch("/api/subscriptions/plans");
       if (plansRes.ok) {
         const plansData = await plansRes.json();
-        setPlans(plansData);
+        setPlans(plansData.plans || (Array.isArray(plansData) ? plansData : SUBSCRIPTION_PLANS));
       }
 
       // 2. Fetch current status
@@ -142,7 +127,7 @@ export default function SubscriptionsPanel({
 
     try {
       // Calculate active discounted cost
-      const basePrice = plan.priceFB;
+      const basePrice = plan.costFb;
       const actualPrice = basePrice * (1 - discountPercent / 100);
 
       // 1. Trigger the UniSat browser extension signature pay with correct price (discounted authoritatively)
@@ -232,21 +217,54 @@ export default function SubscriptionsPanel({
               </button>
               
               {showTooltip && (
-                <div className="absolute left-0 top-6 z-40 bg-slate-900 text-white rounded-xl p-3 shadow-2xl border border-slate-800 w-64 text-[10px] leading-relaxed animate-fade-in font-normal space-y-2 select-text">
+                <div className="absolute left-0 top-6 z-40 bg-slate-900 text-white rounded-xl p-3.5 shadow-2xl border border-slate-800 w-72 text-[10px] leading-relaxed animate-fade-in font-normal space-y-2.5 select-text">
                   <p className="font-semibold text-amber-400 text-xs flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5 shrink-0" />
                     Cómo funcionan los Tiers de MoonYetis
                   </p>
                   <p>
-                    Holders de <strong>$MY Tokens</strong> en Fractal Bitcoin obtienen descuentos automáticos del 5% al 25% en la compra de Pixel Tokens (PX).
+                    Holders de <strong>$MY Tokens</strong> en Fractal Bitcoin obtienen descuentos automáticos del 5% al 25% en la suscripción de planes y compra de tokens.
                   </p>
                   <p>
-                    Las suscripciones con FB expanden de forma permanente tu <strong>Capacidad de Carga/Energía</strong> de dibujo (50 ➔ 500 o 1000) por 30 días, permitiendo pintar obras masivas sin esperas de recarga.
+                    Las suscripciones con FB expanden de forma permanente tu <strong>Capacidad de Carga/Energía</strong> de dibujo (hasta 1000) por la duración de tu plan.
                   </p>
+                  
+                  <div className="border-t border-slate-800 pt-2 space-y-1.5">
+                    <p className="font-bold text-[10px] text-amber-500">Escalera de Tiers $MY:</p>
+                    <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5">
+                      {TIERS.map((tier) => {
+                        const isUserTier = userTier.id === tier.id;
+                        return (
+                          <div 
+                            key={tier.id} 
+                            className={`p-1 px-1.5 rounded flex flex-col gap-0.5 text-[9px] ${
+                              isUserTier 
+                                ? "bg-indigo-950 border border-indigo-700/50" 
+                                : "bg-slate-950/40 border border-slate-850"
+                            }`}
+                          >
+                            <div className="flex justify-between items-center font-bold">
+                              <span className="flex items-center gap-1">
+                                <span>{tier.badge}</span>
+                                <span className={isUserTier ? "text-amber-300 font-extrabold" : "text-slate-200"}>
+                                  {tier.name} {isUserTier && "(Tu Tier)"}
+                                </span>
+                              </span>
+                              <span className="text-emerald-400 font-mono">-{tier.discountPercent}% FB</span>
+                            </div>
+                            <p className="text-[8.5px] text-slate-400 leading-tight">
+                              Min: {tier.minBalance.toLocaleString()} $MY • {tier.perks}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setShowTooltip(false)}
-                    className="text-[10px] text-amber-400 font-bold block pt-1 hover:underline text-right w-full cursor-pointer"
+                    className="text-[10px] text-amber-400 font-bold block pt-1 hover:underline text-right w-full cursor-pointer border-t border-slate-800"
                   >
                     Entendido
                   </button>
@@ -369,7 +387,7 @@ export default function SubscriptionsPanel({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
               {plans.map((plan) => {
                 const isSelected = status.active && status.planId === plan.id;
-                const basePrice = plan.priceFB;
+                const basePrice = plan.costFb;
                 const hasDiscount = discountPercent > 0;
                 const finalPrice = basePrice * (1 - discountPercent / 100);
                 
@@ -399,7 +417,7 @@ export default function SubscriptionsPanel({
                           {plan.name}
                         </h4>
                       </div>
-                      <p className="text-[9.5px] text-slate-450 leading-relaxed">{plan.desc}</p>
+                      <p className="text-[9.5px] text-slate-450 leading-relaxed">{plan.description}</p>
                     </div>
 
                     <div className="border-t border-slate-100 pt-2 flex justify-between items-end mt-0.5 font-sans">

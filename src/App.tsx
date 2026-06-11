@@ -5,6 +5,7 @@ import CanvasBoard from "./components/CanvasBoard";
 import GoogleSignInPopup from "./components/GoogleSignInPopup";
 import { CheckoutPanel } from "./components/CheckoutPanel";
 import SubscriptionsPanel from "./components/SubscriptionsPanel";
+import { tierForBalance } from "../shared/subscriptions-config";
 import { 
   Flame, 
   Terminal as TerminalIcon, 
@@ -47,59 +48,20 @@ import {
 
 // Determine frontend tier system benefits and badges based on real or simulated $MY holdings
 export const getUserTierAndDiscount = (myBalance: number) => {
-  if (myBalance >= 500000000) {
-    return {
-      name: "Cosmonaut",
-      discountPercent: 25,
-      badge: "💎 Cosmonaut VIP",
-      min: 500000000,
-      next: 0,
-      perks: "Lienzo 100x100, Merch VIP, Soporte prioritario, 25% de descuento en FB"
-    };
-  } else if (myBalance >= 100000000) {
-    return {
-      name: "Astronaut",
-      discountPercent: 20,
-      badge: "🚀 Astronaut Premium",
-      min: 100000000,
-      next: 500000000,
-      perks: "Lienzo privado 50x50, Badge premium de perfil, 20% de descuento en FB"
-    };
-  } else if (myBalance >= 50000000) {
-    return {
-      name: "Pioneer",
-      discountPercent: 15,
-      badge: "🎖️ Pioneer",
-      min: 50000000,
-      next: 100000000,
-      perks: "Lienzo privado 10x10, Votaciones de gobernanza, 15% de descuento en FB"
-    };
-  } else if (myBalance >= 10000000) {
-    return {
-      name: "Voyager",
-      discountPercent: 10,
-      badge: "🛸 Voyager",
-      min: 10000000,
-      next: 50000000,
-      perks: "Early access features, +50 píxeles por día, 10% de descuento en FB"
-    };
-  } else if (myBalance >= 1000000) {
-    return {
-      name: "Explorer",
-      discountPercent: 5,
-      badge: "🏕️ Explorer",
-      min: 1000000,
-      next: 10000000,
-      perks: "Badge básico, Canal privado de Discord, 5% de descuento en FB"
-    };
-  }
+  const tier = tierForBalance(myBalance);
+  const getBadge = (id: string, badge: string, name: string) => {
+    if (id === "cosmonaut") return "💎 Cosmonaut VIP";
+    if (id === "astronaut") return "🚀 Astronaut Premium";
+    if (id === "basico") return "🎨 Artista Básico";
+    return `${badge} ${name}`;
+  };
   return {
-    name: "Básico",
-    discountPercent: 0,
-    badge: "🎨 Artista Básico",
-    min: 0,
-    next: 1000000,
-    perks: "Acceso estándar libre al lienzo colaborativo"
+    name: tier.name,
+    discountPercent: tier.discountPercent,
+    badge: getBadge(tier.id, tier.badge, tier.name),
+    min: tier.minBalance,
+    next: tier.nextTierMin || 0,
+    perks: tier.perks
   };
 };
 
