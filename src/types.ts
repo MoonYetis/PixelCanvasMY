@@ -21,6 +21,15 @@ export interface UserProfile {
   google_email?: string;
   google_name?: string;
   avatar_url?: string;
+  max_charges?: number;
+  charges?: number;
+  subscription?: {
+    planId: string;
+    expiresAt: number;
+    txid: string;
+    subscribedAt: number;
+    status?: 'active' | 'cancelled';
+  };
 }
 
 export interface PaintTransaction {

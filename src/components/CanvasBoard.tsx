@@ -8,6 +8,7 @@ import {
   Move, 
   Coins, 
   Check, 
+  Wallet,
   Trash2, 
   Crosshair, 
   Layers,
@@ -30,6 +31,7 @@ import {
   Paintbrush,
   Palette,
   ShoppingCart,
+  CreditCard,
   Globe,
   MessageSquare,
   Activity,
@@ -1512,43 +1514,59 @@ export default function CanvasBoard({
       </div>
 
       {/* FLOAT: Stack on the right side of separate circular white buttons */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col items-center gap-2 pointer-events-auto">
-        {/* Active Player Profile bubble (Clicking opens settings settings modal) */}
-        <button
-          onClick={() => {
-            onTriggerProfile();
-            triggerBeep(523, "sine", 0.05);
-          }}
-          className="w-11 h-11 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-500 flex items-center justify-center relative shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-400 ring-offset-2 hover:ring-indigo-400"
-          title="Editar Perfil y Faucets"
-        >
-          <span className="text-xl" role="img" aria-label="your flag">
-            {userProfile?.flag_emoji || "🇺🇸"}
-          </span>
-          <span className="absolute -bottom-1 -left-1 bg-indigo-600 border border-slate-150 text-white rounded-full text-[8.5px] font-black h-5 w-5 flex items-center justify-center shadow-md font-mono shrink-0">
-            {charges}
-          </span>
-        </button>
+      <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
+        {/* Header toolbar */}
+        <div className="flex items-center gap-2">
+          {/* Open Wallet Button with Green Wallet icon */}
+          <button
+            onClick={() => {
+              onTriggerProfile();
+              triggerBeep(523, "sine", 0.05);
+            }}
+            className="h-10 px-4 bg-emerald-50 hover:bg-emerald-100/90 border border-emerald-200/65 text-emerald-700 hover:text-emerald-800 rounded-xl flex items-center gap-1.5 font-bold font-sans text-xs transition-all active:scale-95 cursor-pointer shadow-sm shadow-emerald-500/10 shrink-0"
+            title="Open Wallet Config"
+          >
+            <Wallet className="w-4 h-4 text-emerald-600" />
+            <span>Open Wallet</span>
+          </button>
+
+          {/* Active Player Profile bubble (Clicking opens settings settings modal) */}
+          <button
+            onClick={() => {
+              onTriggerProfile();
+              triggerBeep(523, "sine", 0.05);
+            }}
+            className="w-11 h-11 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-500 flex items-center justify-center relative shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-400 ring-offset-2 hover:ring-indigo-400 shrink-0"
+            title="Editar Perfil y Faucets"
+          >
+            <span className="text-xl" role="img" aria-label="your flag">
+              {userProfile?.flag_emoji || "🇺🇸"}
+            </span>
+            <span className="absolute -bottom-1 -left-1 bg-indigo-600 border border-slate-150 text-white rounded-full text-[8.5px] font-black h-5 w-5 flex items-center justify-center shadow-md font-mono shrink-0">
+              {charges}
+            </span>
+          </button>
+        </div>
 
         {/* Vertical feature buttons stack */}
         <div className="flex flex-col gap-2 mt-1">
-          {/* 1. Store button */}
+          {/* 1. Subscriptions button */}
           <button
             onClick={() => {
-              onTriggerStore();
+              if (onToggleMenuOverlay) onToggleMenuOverlay("subscriptions");
               triggerBeep(659, "sine", 0.05);
             }}
             className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
-              activeMenuOverlay === "store" 
-                ? "bg-purple-600 border-purple-500 text-white" 
-                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+              activeMenuOverlay === "subscriptions" 
+                ? "bg-amber-500 border-amber-400 text-white shadow-md shadow-amber-950/20 font-bold" 
+                : "bg-white border-slate-200 text-amber-500 hover:text-amber-600 hover:border-amber-300 font-medium"
             }`}
-            title="Tienda de Upgrades"
+            title="Suscripciones y Tiers"
           >
-            <ShoppingCart className="w-5 h-5" />
+            <CreditCard className="w-5 h-5 font-bold" />
           </button>
 
-          {/* 2. Leaderboard button */}
+          {/* Leaderboard button */}
           <button
             onClick={() => {
               if (onToggleMenuOverlay) onToggleMenuOverlay("leaderboard");
@@ -1556,35 +1574,15 @@ export default function CanvasBoard({
             }}
             className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer ${
               activeMenuOverlay === "leaderboard" 
-                ? "bg-purple-600 border-purple-500 text-white" 
-                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
+                ? "bg-purple-600 border-purple-500 text-white animate-pulse" 
+                : "bg-white border-slate-200 text-slate-655 hover:text-slate-800"
             }`}
             title="Ránking y Líderes"
           >
             <Trophy className="w-5 h-5" />
           </button>
 
-          {/* 3. Chat button */}
-          <button
-            onClick={() => {
-              if (onToggleMenuOverlay) onToggleMenuOverlay("chat");
-              triggerBeep(440, "sine", 0.05);
-            }}
-            className={`w-10 h-10 rounded-full border shadow-md flex items-center justify-center relative transition-all hover:scale-105 active:scale-95 cursor-pointer ${
-              activeMenuOverlay === "chat" 
-                ? "bg-purple-600 border-purple-500 text-white" 
-                : "bg-white border-slate-200 text-slate-650 hover:text-slate-800"
-            }`}
-            title="Chat del Servidor"
-          >
-            <MessageSquare className="w-5 h-5" />
-            <span className="absolute top-0.5 right-0.5 flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
-            </span>
-          </button>
-
-          {/* 4. Live Feed Globe */}
+          {/* Live Feed Globe */}
           <button
             onClick={() => {
               if (onToggleMenuOverlay) onToggleMenuOverlay("feed");

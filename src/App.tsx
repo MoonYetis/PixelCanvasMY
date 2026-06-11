@@ -4,6 +4,7 @@ import { PixelData, UserProfile, PaintTransaction, BlockchainBlock } from "./typ
 import CanvasBoard from "./components/CanvasBoard";
 import GoogleSignInPopup from "./components/GoogleSignInPopup";
 import { CheckoutPanel } from "./components/CheckoutPanel";
+import SubscriptionsPanel from "./components/SubscriptionsPanel";
 import { 
   Flame, 
   Terminal as TerminalIcon, 
@@ -13,6 +14,7 @@ import {
   Database, 
   Cpu, 
   RefreshCw,
+  CreditCard,
   Search,
   BookOpen,
   ArrowRight,
@@ -454,6 +456,24 @@ export default function App() {
         setProfile(data);
         setTempUsername(data.username);
         setTempFlag(data.flag_emoji || "🇺🇸");
+
+        if (data.max_charges !== undefined) {
+          setMaxCharges(data.max_charges);
+          localStorage.setItem("wplace_max_charges", data.max_charges.toString());
+          if (data.charges !== undefined) {
+            setCharges(data.charges);
+            localStorage.setItem("wplace_charges", data.charges.toString());
+          }
+        } else {
+          const savedMax = localStorage.getItem("wplace_max_charges");
+          const savedMaxNum = savedMax ? parseInt(savedMax, 10) : 50;
+          if (savedMaxNum > 200) {
+            setMaxCharges(50);
+            localStorage.setItem("wplace_max_charges", "50");
+          } else {
+            setMaxCharges(savedMaxNum);
+          }
+        }
       }
     } catch (e) {
       console.error("Profile sync error:", e);
@@ -1061,71 +1081,36 @@ export default function App() {
               </div>
             )}
 
-            {/* OVERLAY PANEL CHAT: COOPERATIVE PUBLIC CHATROOM */}
-            {activeMenuOverlay === "chat" && (
-              <div className="flex flex-col h-[480px] justify-between text-slate-800">
-                <p className="text-[11px] text-slate-505 leading-normal pb-2 border-b border-slate-100">
-                  Coordinate with other active players in the global sandboxed lobby to sketch flags or secure territory.
-                </p>
 
-                {/* Chat items scroll list */}
-                <div className="flex-1 overflow-y-auto my-3 space-y-2.5 pr-1 max-h-[350px]">
-                  {chats.length > 0 ? (
-                    chats.map((msg) => (
-                      <div 
-                        key={msg.id} 
-                        className="bg-slate-50 hover:bg-slate-100/80 border border-slate-200/60 rounded-xl p-2.5 transition-all text-xs"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5 font-mono">
-                            <span className="text-sm leading-none">{msg.flag_emoji}</span>
-                            <span className="font-bold text-purple-600 truncate max-w-[120px]">{msg.username}</span>
-                            {msg.username === profile?.username && (
-                              <span className="text-[8px] uppercase tracking-wider bg-purple-50 text-purple-600 border border-purple-200/50 px-1 rounded">You</span>
-                            )}
-                          </div>
-                          <span className="text-[9px] text-slate-400 font-mono">
-                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                          </span>
-                        </div>
-                        <p className="text-slate-750 leading-normal font-sans break-words pl-1.5 border-l-2 border-purple-300">
-                          {msg.text}
-                        </p>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="py-12 text-center text-slate-400 text-xs">
-                      No active messages. Introduce yourself!
-                    </div>
-                  )}
-                </div>
 
-                {/* Post chat message form */}
-                <form onSubmit={sendChatMessage} className="pt-2 border-t border-slate-100 flex gap-2">
-                  <input
-                    id="chat-box-input"
-                    type="text"
-                    maxLength={100}
-                    value={newChatText}
-                    onChange={(e) => setNewChatText(e.target.value)}
-                    placeholder="Type team plan..."
-                    disabled={isSendingChat}
-                    className="flex-1 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-purple-500 focus:bg-white focus:ring-1 focus:ring-purple-500 font-sans"
+            {/* OVERLAY PANEL SUBSCRIPTIONS: ON-CHAIN PLANS */}
+            {activeMenuOverlay === "subscriptions" && (
+              <div className="space-y-4 text-slate-800 animate-fade-in pb-4">
+                {!address ? (
+                  <div className="bg-amber-50/60 border border-amber-200/50 rounded-xl p-4 text-center space-y-3">
+                    <p className="text-slate-600 leading-normal font-sans">
+                      Por favor, conecta tu billetera taproot de Fractal Bitcoin para explorar y adquirir planes de suscripción de energía activa.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowProfileSelector(true)}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs transition-all active:scale-95 cursor-pointer shadow-md inline-block font-sans"
+                    >
+                      Connect Wallet
+                    </button>
+                  </div>
+                ) : (
+                  <SubscriptionsPanel 
+                    address={address} 
+                    userProfile={profile} 
+                    onSubscriptionSuccess={() => fetchUserProfile()} 
                   />
-                  <button
-                    id="btn-chat-submit"
-                    type="submit"
-                    disabled={isSendingChat || !newChatText.trim()}
-                    className="p-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center shrink-0"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
-                </form>
+                )}
               </div>
             )}
 
-            {/* OVERLAY PANEL A: STORE CATELOG */}
-            {activeMenuOverlay === "store" && (
+            {/* OVERLAY PANEL A: STORE CATELOG - DISABLED */}
+            {false && activeMenuOverlay === "store" && (
               <div className="space-y-4 text-slate-800 animate-fade-in pb-4">
                 <p className="text-[11px] text-slate-500 leading-normal border-b border-slate-100 pb-2">
                   Exchange your coins or MoonYetis to buy Pixel Tokens (PX), then unlock high-fidelity boosters and energy upgrades!

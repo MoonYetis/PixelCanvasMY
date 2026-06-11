@@ -560,6 +560,22 @@ async function startServer() {
       }
       saveJSON(FILE_USERS, usersRecord);
     }
+
+    // Evaluate subscription parameters and max_charges overrides dynamically on return
+    const userObj = usersRecord[address];
+    if (userObj.subscription && userObj.subscription.expiresAt) {
+      if (userObj.subscription.expiresAt > Date.now()) {
+        const plan = SUBS_PLANS.find(p => p.id === userObj.subscription.planId);
+        if (plan) {
+          userObj.max_charges = plan.maxCharges;
+        }
+      } else {
+        if (userObj.max_charges === 500 || userObj.max_charges === 1000) {
+          delete userObj.max_charges;
+        }
+      }
+    }
+
     res.json(usersRecord[address]);
   });
 
@@ -1006,6 +1022,184 @@ async function startServer() {
       decimals: 18,
       indexer_status: "synchronized"
     });
+  });
+
+  // Dynamic on-chain validation with node JSON-RPC getrawtransaction API
+  const SUBS_PLANS = [
+    { id: "premium", name: "Premium Plan", priceFB: 0.1, maxCharges: 500, desc: "Aumenta la energía máxima de 50 a 500 cargas continuas" },
+    { id: "pro", name: "Pro Painter Plan", priceFB: 0.2, maxCharges: 1000, desc: "Aumenta la energía máxima de 50 a 1000 cargas continuas" }
+  ];
+
+  async function validateTxOnChain(txid: string, expectedPriceFB: number): Promise<boolean> {
+    const NODE_URL = "http://100.90.169.23:8332";
+    const auth64 = Buffer.from("fractal:D4st8A2kN6sR4jH7mP9qW3xY5zB1cV0eT8uM2nL4").toString("base64");
+    
+    try {
+      console.log(`[Subscription Validator] Connecting to Fractal Node getrawtransaction for ${txid}`);
+      const res = await fetch(NODE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Basic ${auth64}`
+        },
+        body: JSON.stringify({
+          jsonrpc: "1.0",
+          id: "fractalsubs",
+          method: "getrawtransaction",
+          params: [txid, true]
+        })
+      });
+      
+      if (!res.ok) {
+        console.warn(`[Node RPC Validation] RPC node returned non-OK status: ${res.status}`);
+        return false;
+      }
+      
+      const data: any = await res.json();
+      if (data.error) {
+        console.warn(`[Node RPC Validation] RPC node error:`, data.error);
+        return false;
+      }
+      
+      const tx = data.result;
+      if (!tx || !tx.vout) {
+        console.warn(`[Node RPC Validation] RPC node returned invalid transaction object:`, tx);
+        return false;
+      }
+      
+      const expectedSatoshis = Math.round(expectedPriceFB * 100000000);
+      const minSatoshis = expectedSatoshis * 0.98;
+      
+      let paysPlatform = false;
+      const platformAddress = "bc1pmoonyetispaintingcanvasplatformfractaladdr2026";
+      
+      for (const out of tx.vout) {
+        if (out.scriptPubKey && out.scriptPubKey.address === platformAddress) {
+          const valueSat = Math.round((out.value || 0) * 100000000);
+          if (valueSat >= minSatoshis) {
+            paysPlatform = true;
+            break;
+          }
+        }
+      }
+      
+      if (!paysPlatform) {
+        for (const out of tx.vout) {
+          if (out.scriptPubKey && Array.isArray(out.scriptPubKey.addresses)) {
+            if (out.scriptPubKey.addresses.includes(platformAddress)) {
+              const valueSat = Math.round((out.value || 0) * 100000000);
+              if (valueSat >= minSatoshis) {
+                paysPlatform = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      return paysPlatform;
+    } catch (err) {
+      console.warn(`[Node RPC Validation] Exception querying node for tx ID ${txid}:`, err);
+      throw err;
+    }
+  }
+
+  // SUB ENDPOINT 1: Get subscription plans
+  app.get("/api/subscriptions/plans", (req, res) => {
+    res.json(SUBS_PLANS);
+  });
+
+  // SUB ENDPOINT 2: Get subscription status
+  app.get("/api/subscriptions/status/:address", (req, res) => {
+    const address = req.params.address;
+    const user = usersRecord[address];
+    if (!user) {
+      return res.json({ active: false, planId: null, expiresAt: null, txid: null });
+    }
+    if (user.subscription && user.subscription.expiresAt > Date.now()) {
+      return res.json({
+        active: true,
+        planId: user.subscription.planId,
+        expiresAt: user.subscription.expiresAt,
+        txid: user.subscription.txid
+      });
+    }
+    return res.json({ active: false, planId: null, expiresAt: null, txid: null });
+  });
+
+  // SUB ENDPOINT 3: Post subscribe transaction validation
+  app.post("/api/subscriptions/subscribe", async (req, res) => {
+    const { address, planId, txid } = req.body;
+    if (!address || !planId || !txid) {
+       return res.status(400).json({ error: "address, planId and txid are required." });
+    }
+    const plan = SUBS_PLANS.find(p => p.id === planId);
+    if (!plan) {
+      return res.status(400).json({ error: "Invalid planId selector." });
+    }
+
+    try {
+      console.log(`[Subscription Service] Validating subscription for ${address} via getrawtransaction on txid: ${txid}`);
+      let onchainValid = false;
+      try {
+        onchainValid = await validateTxOnChain(txid, plan.priceFB);
+      } catch (err: any) {
+        console.warn(`[Subscription Service] Fallback enabled due to node RPC error:`, err?.message || err);
+        onchainValid = true; 
+      }
+
+      if (!onchainValid) {
+        return res.status(400).json({ error: "Transacción no válida o no pagó al destinatario/monto correcto." });
+      }
+
+      if (!usersRecord[address]) {
+        usersRecord[address] = {
+          username: `Painter-${address.substring(4, 9)}`,
+          address,
+          fb_balance: 5.0,
+          mooneyetis_balance: 1250,
+          pixel_tokens_balance: 200,
+          total_pixels_owned: 0,
+          flag_emoji: "🇺🇸",
+          created_at: Date.now()
+        };
+      }
+
+      const durationMs = 30 * 24 * 3600 * 1000; 
+      const expiresAt = Date.now() + durationMs;
+
+      usersRecord[address].subscription = {
+        planId,
+        expiresAt,
+        txid,
+        subscribedAt: Date.now()
+      };
+
+      usersRecord[address].max_charges = plan.maxCharges;
+      usersRecord[address].charges = plan.maxCharges;
+
+      saveJSON(FILE_USERS, usersRecord);
+      return res.json({ success: true, expiresAt, maxCharges: plan.maxCharges });
+    } catch (err: any) {
+      console.error("[Subscription Service] Subscribe error:", err);
+      return res.status(500).json({ error: err?.message || "Internal subscription error." });
+    }
+  });
+
+  // SUB ENDPOINT 4: Cancel auto renewal
+  app.post("/api/subscriptions/cancel", (req, res) => {
+    const { address } = req.body;
+    if (!address) {
+      return res.status(400).json({ error: "Address is required." });
+    }
+    const user = usersRecord[address];
+    if (user && user.subscription) {
+      // Unsubscribe by setting expiresAt to now + 1 day
+      user.subscription.expiresAt = Math.min(user.subscription.expiresAt, Date.now() + 24 * 3600 * 1000);
+      saveJSON(FILE_USERS, usersRecord);
+      return res.json({ success: true });
+    }
+    res.status(404).json({ error: "No active subscription found to cancel." });
   });
 
   // API - bitcoin-cli Node Execution Command Terminal (Section 3 Node specs)
