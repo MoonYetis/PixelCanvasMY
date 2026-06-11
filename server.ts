@@ -57,8 +57,11 @@ function isValidAddress(address: string | undefined): boolean {
 
 // Fetch user's real moonyetis BRC-20 token balance with exponential backoff retry logic (max 3 times)
 async function fetchMyBalanceWithRetry(address: string, retries = 3, delay = 500): Promise<number> {
+  const token = process.env.UNISAT_API_TOKEN;
+  if (!token) {
+    throw new Error("UNISAT_API_TOKEN environment variable is required");
+  }
   const url = `https://open-api-fractal.unisat.io/v1/indexer/address/${address}/brc20/summary`;
-  const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -69,6 +72,11 @@ async function fetchMyBalanceWithRetry(address: string, retries = 3, delay = 500
           "Accept": "application/json"
         }
       });
+
+      if (response.status === 403) {
+        console.warn(`[Unisat API] 403 Forbidden for address: ${address}. Falling back to 0 silently.`);
+        return 0;
+      }
 
       if (!response.ok) {
         throw new Error(`Unisat OpenAPI error status: ${response.status}`);
@@ -101,8 +109,11 @@ async function fetchMyBalanceWithRetry(address: string, retries = 3, delay = 500
 
 // Fetch user's real FB available balance with exponential backoff retry logic (max 3 times)
 async function fetchFbBalanceWithRetry(address: string, retries = 3, delay = 500): Promise<number> {
+  const token = process.env.UNISAT_API_TOKEN;
+  if (!token) {
+    throw new Error("UNISAT_API_TOKEN environment variable is required");
+  }
   const url = `https://open-api-fractal.unisat.io/v1/indexer/address/${address}/available-balance`;
-  const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -113,6 +124,11 @@ async function fetchFbBalanceWithRetry(address: string, retries = 3, delay = 500
           "Accept": "application/json"
         }
       });
+
+      if (response.status === 403) {
+        console.warn(`[Unisat FB API] 403 Forbidden for address: ${address}. Falling back to 0 silently.`);
+        return 0;
+      }
 
       if (!response.ok) {
         throw new Error(`Unisat OpenAPI error status: ${response.status}`);
@@ -138,32 +154,6 @@ async function fetchFbBalanceWithRetry(address: string, retries = 3, delay = 500
 
 // Determine server-side authoritative tiers and discount benefits based on MY balance
 function getUserTierAndDiscount(myBalance: number) {
-  if (myBalance >= 500000000) {
-    return { tier: "Cosmonaut", discountPercent: 25, badge: "💎 Cosmonaut VIP" };
-  } else if (myBalance >= 100000000) {
-    return { tier: "Astronaut", discountPercent: 20, badge: "🚀 Astronaut Premium" };
-  } else if (myBalance >= 50000000) {
-    return { tier: "Pioneer", discountPercent: 15, badge: "🎖️ Pioneer" };
-  } else if (myBalance >= 1000000) {
-    return { tier: "Voyager", discountPercent: 10, badge: "🛸 Voyager" };
-  } else if (myBalance >= 1000000) {
-    // Actually Explorer: Let's adjust to match our defined list
-    // Explorer: 1,000,000 $MY to < 10,000,000 $MY
-    // Voyager: 10,000,000 $MY to < 50,000,000 $MY
-    // Pioneer: 50,000,000 $MY to < 100,000,000 $MY
-    // Astronaut: 100,000,000 $MY to < 500,000,000 $MY
-    // Cosmonaut: >= 500,000,000 $MY
-    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
-  }
-  // Less than 1,000,000 $MY
-  if (myBalance >= 1000000) {
-    return { tier: "Explorer", discountPercent: 5, badge: "🏕️ Explorer" };
-  }
-  return { tier: "Básico", discountPercent: 0, badge: "🎨 Artista Básico" };
-}
-
-// Double check adjustment check
-function getUserTierAndDiscountAdjusted(myBalance: number) {
   if (myBalance >= 500000000) {
     return { tier: "Cosmonaut", discountPercent: 25, badge: "💎 Cosmonaut VIP" };
   } else if (myBalance >= 100000000) {
@@ -655,7 +645,7 @@ async function startServer() {
 
     if (fromCurrency === "FB") {
       // Calculate tier and discount percentage based on real or simulated $MY holdings
-      const { tier, discountPercent, badge } = getUserTierAndDiscountAdjusted(user.mooneyetis_balance || 0);
+      const { tier, discountPercent, badge } = getUserTierAndDiscount(user.mooneyetis_balance || 0);
       const finalFbNeeded = parsedAmount * (1 - discountPercent / 100);
 
       if (user.fb_balance < finalFbNeeded) {
@@ -830,7 +820,10 @@ async function startServer() {
     // 2. Real on-chain lookup via Unisat Indexer API
     try {
       const url = `https://open-api-fractal.unisat.io/v1/indexer/tx/${txid}`;
-      const token = "96cdfb77fd3e7ff2ad875887f412eed25e91e7e75ee84f2857c074837de41e7e";
+      const token = process.env.UNISAT_API_TOKEN;
+      if (!token) {
+        throw new Error("UNISAT_API_TOKEN environment variable is required");
+      }
 
       const response = await fetch(url, {
         method: "GET",
@@ -1024,15 +1017,72 @@ async function startServer() {
     });
   });
 
-  // Dynamic on-chain validation with node JSON-RPC getrawtransaction API
+    // Dynamic on-chain validation with node JSON-RPC getrawtransaction API
   const SUBS_PLANS = [
-    { id: "premium", name: "Premium Plan", priceFB: 0.1, maxCharges: 500, desc: "Aumenta la energía máxima de 50 a 500 cargas continuas" },
-    { id: "pro", name: "Pro Painter Plan", priceFB: 0.2, maxCharges: 1000, desc: "Aumenta la energía máxima de 50 a 1000 cargas continuas" }
+    { id: "premium", name: "Premium Plan", priceFB: 0.1, maxCharges: 500, desc: "Aumenta la energía de 50 a 500 cargas continuas durante 30 días" },
+    { id: "pro", name: "Pro Painter Plan", priceFB: 0.2, maxCharges: 1000, desc: "Aumenta la energía de 50 a 1000 cargas continuas durante 30 días" }
   ];
 
+  // Node RPC tracking & circuit breaker state
+  let nodeConsecutiveFailures = 0;
+  let nodeLastFailureTime = 0;
+
+  function handleNodeSuccess() {
+    nodeConsecutiveFailures = 0;
+  }
+
+  function handleNodeFailure() {
+    nodeConsecutiveFailures++;
+    nodeLastFailureTime = Date.now();
+  }
+
+  function isNodeCircuitBroken(): boolean {
+    if (nodeConsecutiveFailures >= 5) {
+      const elapsed = Date.now() - nodeLastFailureTime;
+      if (elapsed < 60000) {
+        return true; // Circuit is broken (503 Service Unavailable)
+      } else {
+        // 1 minute has passed, reset failure counter to allow a test request
+        nodeConsecutiveFailures = 0;
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function getFractalAuth(): { url: string; auth64: string } {
+    const url = process.env.FRACTAL_RPC_URL;
+    const user = process.env.FRACTAL_RPC_USER;
+    const password = process.env.FRACTAL_RPC_PASSWORD;
+
+    if (!url) {
+      throw new Error("FRACTAL_RPC_URL environment variable is required");
+    }
+    if (!user || !password) {
+      throw new Error("FRACTAL_RPC_USER and FRACTAL_RPC_PASSWORD environment variables are required");
+    }
+
+    const auth64 = Buffer.from(`${user}:${password}`).toString("base64");
+    return { url, auth64 };
+  }
+
   async function validateTxOnChain(txid: string, expectedPriceFB: number): Promise<boolean> {
-    const NODE_URL = "http://100.90.169.23:8332";
-    const auth64 = Buffer.from("fractal:D4st8A2kN6sR4jH7mP9qW3xY5zB1cV0eT8uM2nL4").toString("base64");
+    if (isNodeCircuitBroken()) {
+      const error = new Error("Node circuit broken");
+      (error as any).status = 503;
+      throw error;
+    }
+
+    let NODE_URL: string;
+    let auth64: string;
+    try {
+      const authInfo = getFractalAuth();
+      NODE_URL = authInfo.url;
+      auth64 = authInfo.auth64;
+    } catch (err: any) {
+      console.error("[Node RPC Setup] Error fetching node credentials:", err?.message || err);
+      throw err;
+    }
     
     try {
       console.log(`[Subscription Validator] Connecting to Fractal Node getrawtransaction for ${txid}`);
@@ -1052,12 +1102,15 @@ async function startServer() {
       
       if (!res.ok) {
         console.warn(`[Node RPC Validation] RPC node returned non-OK status: ${res.status}`);
-        return false;
+        handleNodeFailure();
+        throw new Error(`Node RPC error status: ${res.status}`);
       }
       
       const data: any = await res.json();
+      handleNodeSuccess();
+      
       if (data.error) {
-        console.warn(`[Node RPC Validation] RPC node error:`, data.error);
+        console.warn(`[Node RPC Validation] RPC node error (tx potentially invalid):`, data.error);
         return false;
       }
       
@@ -1098,8 +1151,11 @@ async function startServer() {
       }
       
       return paysPlatform;
-    } catch (err) {
-      console.warn(`[Node RPC Validation] Exception querying node for tx ID ${txid}:`, err);
+    } catch (err: any) {
+      if (err.status !== 503) {
+        console.warn(`[Node RPC Validation] Exception querying node for tx ID ${txid}:`, err?.message || err);
+        handleNodeFailure();
+      }
       throw err;
     }
   }
@@ -1144,8 +1200,11 @@ async function startServer() {
       try {
         onchainValid = await validateTxOnChain(txid, plan.priceFB);
       } catch (err: any) {
-        console.warn(`[Subscription Service] Fallback enabled due to node RPC error:`, err?.message || err);
-        onchainValid = true; 
+        if (err.status === 503 || err.message === "Node circuit broken") {
+          return res.status(503).json({ error: "Service unavailable: Node circuit breaker active. Retry later." });
+        }
+        console.warn(`[Subscription Service] Node RPC error:`, err?.message || err);
+        return res.status(400).json({ error: "node unavailable, retry later" });
       }
 
       if (!onchainValid) {
